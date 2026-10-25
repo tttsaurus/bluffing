@@ -8,20 +8,24 @@ import { spawn, spawnSync } from 'node:child_process'
 const require=createRequire(import.meta.url),loader=require.resolve('tsx')
 function fixture(env={}) {
   const root=mkdtempSync(join(tmpdir(),'bluff-ts-dev-')),calls=join(root,'calls')
-  for(const path of ['scripts/db','scripts/network','server/src','node_modules/vite/bin'])mkdirSync(join(root,path),{recursive:true})
+  for(const path of ['scripts/db','scripts/network','server/src','frontend','node_modules/vite/bin'])mkdirSync(join(root,path),{recursive:true})
+  writeFileSync(join(root,'frontend/index.html'),'<!doctype html><div id="root"></div>')
   writeFileSync(join(root,'package.json'),'{"type":"module"}')
   symlinkSync(dirname(require.resolve('tsx/package.json')),join(root,'node_modules/tsx'))
-  copyFileSync(new URL('../dev.ts',import.meta.url),join(root,'scripts/dev.ts'))
-  writeFileSync(join(root,'server/src/config.ts'),'export const port=()=>Number(process.env.PORT);export const databaseUrl=()=>"unused";')
+  // Isolate the copied launcher from an actual developer server on port 5173.
+  writeFileSync(join(root,'scripts/dev.ts'),readFileSync(new URL('../dev.ts',import.meta.url),'utf8').replaceAll('5173','45872'))
+  copyFileSync(new URL('../db/startup-error.ts',import.meta.url),join(root,'scripts/db/startup-error.ts'))
+  writeFileSync(join(root,'server/src/config.ts'),'export const port=()=>Number(process.env.PORT);export const databaseUrl=()=>"postgresql://test:private@127.0.0.1:5432/test";')
   writeFileSync(join(root,'scripts/db/migrate.ts'),'import{appendFileSync}from"node:fs";export async function migrate(){appendFileSync(process.env.CALLS,"migration\\n");if(process.env.FAIL_MIGRATION)throw Error("Migration failed");}')
   writeFileSync(join(root,'scripts/network/tailscale.ts'),'export async function checkTailnet(){if(process.env.FAIL_TAILNET)throw Error("Tailscale is not connected");}export async function enableTailnet(){}')
   writeFileSync(join(root,'node_modules/vite/package.json'),'{"name":"vite","version":"1.0.0","type":"module"}')
-  const code=`import {createServer} from 'node:http';import{appendFileSync}from'node:fs';
+  const code=`import {createServer} from 'node:http';import{appendFileSync,existsSync}from'node:fs';import{join}from'node:path';
 const role=process.argv.includes('--host')?'frontend':'backend';
+if(role==='frontend'&&!existsSync(join(process.argv[2]||process.cwd(),'index.html'))){console.error('Vite root must contain frontend/index.html');process.exit(19)}
 if(process.env['FAIL_'+role.toUpperCase()])process.exit(role==='backend'?17:18);
 appendFileSync(process.env.CALLS,role+' started\\n');
 const server=createServer((req,res)=>{appendFileSync(process.env.CALLS,role+' healthy\\n');res.end('ok')});
-server.listen(role==='backend'?Number(process.env.PORT):5173,'127.0.0.1');
+server.listen(role==='backend'?Number(process.env.PORT):45872,'127.0.0.1');
 process.on('SIGTERM',()=>{appendFileSync(process.env.CALLS,role+' stopped\\n');server.close(()=>process.exit(0))});`
   writeFileSync(join(root,'server/src/local.ts'),code);writeFileSync(join(root,'node_modules/vite/bin/vite.js'),code)
   let output='',child

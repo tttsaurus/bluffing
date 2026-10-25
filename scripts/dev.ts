@@ -4,6 +4,7 @@ import { createConnection } from 'node:net'
 import { resolve, dirname } from 'node:path'
 import { databaseUrl, port } from '../server/src/config.ts'
 import { migrate } from './db/migrate.ts'
+import { databaseStartupError } from './db/startup-error.ts'
 import { checkTailnet, enableTailnet } from './network/tailscale.ts'
 import { mkdir, writeFile, readFile, unlink } from 'node:fs/promises'
 
@@ -54,14 +55,19 @@ async function main() {
   const tailnet = args.includes('--tailnet')
   if (tailnet) await checkTailnet()
   console.log('Checking PostgreSQL and applying pending migrations…')
-  await migrate(databaseUrl(true))
+  const migrationUrl = databaseUrl(true)
+  try {
+    await migrate(migrationUrl)
+  } catch (error) {
+    throw databaseStartupError(error, migrationUrl)
+  }
   const children: ChildProcess[] = []
   let stopping = false
   function start(arguments_: string[], env = process.env) {
     const child = spawn(process.execPath, arguments_, {
       cwd: process.cwd(),
       env,
-      stdio: 'inherit',
+      stdio: 'inherit'
     })
     children.push(child)
     child.on('error', (error) => {
@@ -90,7 +96,9 @@ async function main() {
       children.map((child) =>
         child.exitCode !== null
           ? Promise.resolve()
-          : new Promise<void>((resolve) => child.once('exit', () => resolve()))
+          : new Promise<void>((resolve) =>
+              child.once('exit', () => resolve())
+            )
       )
     )
     clearTimeout(force)
@@ -115,7 +123,8 @@ async function main() {
     const deadline = Date.now() + timeout * 1000
     while (!stopping && Date.now() < deadline) {
       try {
-        if ((await fetch(url, { signal: AbortSignal.timeout(2000) })).ok) return
+        if ((await fetch(url, { signal: AbortSignal.timeout(2000) })).ok)
+          return
       } catch {}
       await new Promise((resolve) => setTimeout(resolve, 250))
     }
@@ -123,11 +132,14 @@ async function main() {
   }
   try {
     await wait(`${backend}/api/health`)
-    start([vite, '--host', '127.0.0.1', '--port', '5173', '--strictPort'], {
-      ...process.env,
-      BLUFF_BACKEND_URL: backend,
-      VITE_LOCAL_API_URL: backend,
-    })
+    start(
+      [vite, resolve('frontend'), '--host', '127.0.0.1', '--port', '5173', '--strictPort'],
+      {
+        ...process.env,
+        BLUFF_BACKEND_URL: backend,
+        VITE_LOCAL_API_URL: backend
+      }
+    )
     await wait('http://127.0.0.1:5173/')
     await mkdir('.local', { recursive: true })
     await writeFile('.local/app.pid', String(process.pid))
@@ -140,4 +152,11 @@ async function main() {
     await stop(1)
   }
 }
-await main()
+try {
+  await main()
+} catch (error) {
+  console.error(
+    `Startup failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+  )
+  process.exitCode = 1
+}

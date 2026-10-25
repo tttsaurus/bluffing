@@ -31,6 +31,8 @@ Copy `.env.example` to `.env.local` and set `DATABASE_URL` if different from the
 
 Stop/start the container with `podman stop blufftable-db` / `podman start blufftable-db`. Its named volume preserves data.
 
+If startup reports `ECONNREFUSED 127.0.0.1:5432` or “PostgreSQL is not accepting connections”, the local database is stopped or uses a different port. Run `podman start blufftable-db` (or `docker compose up -d db`) before starting the app. The launcher starts the backend/frontend, not PostgreSQL, and never creates or replaces a database automatically. Missing `.env` / `.env.local` notices are harmless when using the default local connection; otherwise configure `.env.local` first.
+
 ## Install, build, and run
 
 Run all commands from the repository root:

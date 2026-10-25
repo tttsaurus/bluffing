@@ -2,11 +2,52 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { databaseUrl, port } from '../src/config.ts'
 import * as v from '../src/validation.ts'
-import { migrationChecksum, migrationFiles } from '../../scripts/db/migrate.ts'
+import {
+  migrationChecksum,
+  migrationFiles
+} from '../../scripts/db/migrate.ts'
+import { databaseStartupError } from '../../scripts/db/startup-error.ts'
+test('database startup errors explain how to start local PG without leaking credentials', () => {
+  const url =
+    'postgresql://secret-user:secret-password@127.0.0.1:5432/secret-db'
+  const message = databaseStartupError(
+    { code: 'ECONNREFUSED' },
+    url
+  ).message
+  assert.match(message, /127\.0\.0\.1:5432/)
+  assert.match(message, /podman start blufftable-db/)
+  assert.doesNotMatch(message, /secret-/)
+})
+test('nested connection errors distinguish Neon, authentication and missing databases', () => {
+  const url = 'postgresql://owner:secret@ep-test.neon.tech/neondb'
+  assert.match(
+    databaseStartupError(
+      new AggregateError([{ code: 'ECONNREFUSED' }]),
+      url
+    ).message,
+    /For Neon/
+  )
+  assert.match(
+    databaseStartupError({ cause: { code: 'ENOTFOUND' } }, url).message,
+    /Cannot reach PostgreSQL/
+  )
+  assert.match(
+    databaseStartupError({ code: '28P01' }, url).message,
+    /authentication failed/
+  )
+  assert.match(
+    databaseStartupError({ code: '3D000' }, url).message,
+    /does not exist/
+  )
+  const migrationError = new Error(
+    'Migration history or checksum mismatch'
+  )
+  assert.equal(databaseStartupError(migrationError, url), migrationError)
+})
 test('Neon pooled traffic and direct migrations resolve independently', () => {
   const env = {
     DATABASE_URL: 'postgresql://user@pooler/db',
-    DATABASE_URL_UNPOOLED: 'postgresql://user@direct/db',
+    DATABASE_URL_UNPOOLED: 'postgresql://user@direct/db'
   }
   assert.equal(databaseUrl(false, env), env.DATABASE_URL)
   assert.equal(databaseUrl(true, env), env.DATABASE_URL_UNPOOLED)
@@ -30,16 +71,19 @@ test('migration refuses mismatched Neon preview/production branch URLs and legac
       databaseUrl(true, {
         DATABASE_URL,
         DATABASE_URL_UNPOOLED:
-          'postgresql://owner@ep-production.us-east-2.aws.neon.tech/neondb',
+          'postgresql://owner@ep-production.us-east-2.aws.neon.tech/neondb'
       }),
     /same branch/
   )
   assert.throws(
     () =>
-      databaseUrl(false, { DB_URL: 'jdbc:postgresql://localhost:5432/old' }),
+      databaseUrl(false, {
+        DB_URL: 'jdbc:postgresql://localhost:5432/old'
+      }),
     /legacy JDBC/
   )
-  const direct = 'postgresql://owner@ep-preview.us-east-2.aws.neon.tech/neondb'
+  const direct =
+    'postgresql://owner@ep-preview.us-east-2.aws.neon.tech/neondb'
   assert.equal(
     databaseUrl(true, { DATABASE_URL, DATABASE_URL_UNPOOLED: direct }),
     direct
@@ -65,13 +109,18 @@ test('HTTP and socket validation reject malformed types before touching the data
     false
   )
   assert.equal(
-    v.socketMessage.safeParse({ type: 'AUTH', payload: { deviceToken: 'x' } })
-      .success,
+    v.socketMessage.safeParse({
+      type: 'AUTH',
+      payload: { deviceToken: 'x' }
+    }).success,
     false
   )
   assert.equal(
-    v.command.safeParse({ roomId: 'not-a-uuid', action: 'PLAY', cardIds: [] })
-      .success,
+    v.command.safeParse({
+      roomId: 'not-a-uuid',
+      action: 'PLAY',
+      cardIds: []
+    }).success,
     false
   )
 })
