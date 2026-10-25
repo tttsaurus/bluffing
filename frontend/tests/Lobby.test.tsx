@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import App from '../src/App'
 import { useGameStore } from '../src/store'
 import { room, self } from './fixtures'
+import type { GameType } from '../src/types'
 
 const initial = useGameStore.getState()
 afterEach(() => { cleanup(); useGameStore.setState(initial, true) })
@@ -75,6 +76,20 @@ it('lets the host deal with two present players and validates custom hands again
   expect(startGame).toHaveBeenCalledWith(1, 20, false)
   act(() => useGameStore.setState({ room: { ...view, players: view.players.map((member, index) => index === 1 ? { ...member, presence: 'AWAY' } : member) } }))
   expect(screen.getByRole('button', { name: /Need 2 players here/ }).hasAttribute('disabled')).toBe(true)
+})
+
+it.each<GameType>(['LIARS_DECK', 'LIARS_DECK_PLUS', 'LIARS_DECK_4_FUN'])('%s reuses classic game setup and the deck/avatar shop', async gameType => {
+  vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+  const view = waitingRoom()
+  view.gameType = gameType
+  view.skins = [{ id: 'CLASSIC', name: 'House deck', effect: 'Engraved gold', price: 0, owned: true }]
+  useGameStore.setState({ player: self, bootstrapping: false, room: view, connected: true, loading: false })
+  render(<App />)
+  expect(screen.getByRole('region', { name: 'Game setup' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: /Deal the cards/ })).toBeTruthy()
+  expect(screen.getByText('House deck')).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Avatars' })).toBeTruthy()
+  expect(Boolean(screen.queryByRole('checkbox', { name: /Random decks/ }))).toBe(gameType === 'LIARS_DECK_PLUS')
 })
 
 it('Plus random decks use the participating count, not the number of durable seats', async () => {

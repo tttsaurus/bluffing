@@ -34,4 +34,12 @@ describe('Plus truthful rank hints match the server rules', () => {
     expect(gameModes.LIARS_DECK.cardsPerDeck).toBe(52)
     expect(gameModes.LIARS_DECK_PLUS.cardsPerDeck).toBe(54)
   })
+  it('variants inherit classic setup defaults, with random decks restricted to Plus', () => {
+    expect(gameModes.LIARS_DECK_4_FUN.cardsPerDeck).toBe(gameModes.LIARS_DECK.cardsPerDeck)
+    expect(gameModes.LIARS_DECK_4_FUN.randomDecks).toBe(false)
+    expect(gameModes.LIARS_DECK.randomDecks).toBe(false)
+    expect(gameModes.LIARS_DECK_PLUS.randomDecks).toBe(true)
+    expect(gameModes.LIARS_DECK_4_FUN.ruleHint).toBe('spelling')
+    expect(gameModes.LIARS_DECK_PLUS.ruleHint).toBe('plus')
+  })
 })

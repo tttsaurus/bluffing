@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stable entry point; implementation and reusable helpers live below scripts/.
-exec bash "$(dirname "${BASH_SOURCE[0]}")/dev/start.sh" "$@"
+# Linux/macOS convenience entry point; Windows uses start-dev.ps1 or npm run dev.
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+exec npm run dev -- "$@"

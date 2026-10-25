@@ -2,10 +2,20 @@ import type { Card, GameType } from './types'
 
 export const ranks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
 export const suitSymbols = { SPADES: '♠', HEARTS: '♥', DIAMONDS: '♦', CLUBS: '♣', JOKER: '✦' }
-export const gameModes: Record<GameType, { name: string; cardsPerDeck: number }> = {
-  LIARS_DECK: { name: "Liar's Deck", cardsPerDeck: 52 },
-  LIARS_DECK_PLUS: { name: "Liar's Deck Plus", cardsPerDeck: 54 },
-  LIARS_DECK_4_FUN: { name: "Liar's Deck 4 Fun", cardsPerDeck: 52 },
+interface GameMode {
+  name: string
+  cardsPerDeck: number
+  randomDecks: boolean
+  ruleHint: 'classic' | 'plus' | 'spelling'
+}
+const classic: GameMode = { name: "Liar's Deck", cardsPerDeck: 52, randomDecks: false, ruleHint: 'classic' }
+
+// All modes use the same shop, waiting-room setup, and table components.
+// Variants override metadata and rule hints only, never copy the whole UI.
+export const gameModes: Record<GameType, GameMode> = {
+  LIARS_DECK: classic,
+  LIARS_DECK_PLUS: { ...classic, name: "Liar's Deck Plus", cardsPerDeck: 54, randomDecks: true, ruleHint: 'plus' },
+  LIARS_DECK_4_FUN: { ...classic, name: "Liar's Deck 4 Fun", ruleHint: 'spelling' },
 }
 
 export function straightClaimRanks(cards: Card[]) {

@@ -1,14 +1,41 @@
 # Bluff Table
 
-Multiplayer Liar’s Deck, Plus, and 4 Fun. React + TypeScript + Vite frontend, TypeScript/Node backend, PostgreSQL. No Java or Gradle required.
+A multiplayer card-game framework with Liar's Deck, Liar's Deck Plus, and Liar's Deck 4 Fun.
 
-## Requirements
+## How it works
 
-Node.js 24 LTS and npm. Local hosting also needs PostgreSQL 16+ (native, Podman, or Docker). Linux is the primary platform; the same Node launcher works on macOS and Windows.
+The project has three parts:
 
-## Local database
+- **Web app:** React, TypeScript, Vite, CSS/Motion, and Zustand. It displays the lobby, waiting room, shop, and game table.
+- **Game server:** TypeScript on Node.js. HTTP handles accounts and rooms; WebSockets carry moves and live updates. The server validates moves and calculates rewards.
+- **Database:** PostgreSQL stores accounts, rooms, wallets, purchases, game state, and presence. Use local PostgreSQL for self-hosting, or Neon for hosted PostgreSQL.
 
-Choose one container runtime:
+A room has one game type, chosen when it is created. Each deal has its own deck count, hand size, and randomized seat order. Room wallets, purchases, and records persist between deals.
+
+Each game type has its own engine class. Plus and 4 Fun inherit classic dealing, turns, checks, folds, and payouts, then add only their special rules. All three reuse the classic shop catalog and the same frontend setup/table components. State and ownership stay separate for every room and player.
+
+Your browser stores a persistent account credential. Nicknames can overlap; the short identity hash distinguishes accounts. Clearing browser storage or changing browser/origin does not automatically recover that credential.
+
+There are two ways to host the same application:
+
+- **Your computer:** Node runs the backend and PostgreSQL runs separately. During development, Vite serves the web app at **http://localhost:5173** and proxies API/WebSocket traffic to the backend on port **8080**. A built app uses just **http://localhost:8080**.
+- **Vercel + Neon:** Vercel serves the web app and Node backend; Neon stores the database. Database-backed game state lets different backend instances serve the same room.
+
+Tailscale is optional: it lets other allowed devices reach the app running on your computer. It does not replace the server or database.
+
+## Run locally and develop
+
+Use **Node.js 24 with npm** and **PostgreSQL 16+**. No Java or Gradle is needed. Linux is the primary platform; all platforms use the same Node launcher.
+
+Run commands from the repository folder containing `package.json`. Choose your OS below.
+
+[Linux](#linux--podman) · [macOS](#macos--homebrew) · [Windows](#windows--powershell--docker-desktop) · [Tailscale](#tailscale-integration--share-your-local-server-privately) · [Vercel + Neon](#vercel-integration--deploy-with-neon-postgresql)
+
+### Linux — Podman
+
+Install Node.js 24 and Podman using your preferred package manager.
+
+**First run:** create the database container once, then install dependencies and start the app:
 
 ```bash
 podman run -d --name blufftable-db \
@@ -18,39 +45,117 @@ podman run -d --name blufftable-db \
   -p 127.0.0.1:5432:5432 \
   -v blufftable-data:/var/lib/postgresql/data \
   docker.io/library/postgres:16-alpine
+
+npm ci --include=optional
+npm run dev
 ```
 
-Alternatively, use `docker compose up -d db`, or create a database on an existing PostgreSQL server:
+**Later runs:**
+
+```bash
+podman start blufftable-db
+npm run dev
+```
+
+Open **http://localhost:5173**. Edit files in `frontend/src/` or `server/src/`; restart the launcher after backend changes. The database volume preserves your data.
+
+Ctrl+C stops the app. To stop PostgreSQL too, run `podman stop blufftable-db`.
+
+Prefer Docker? Use `docker compose up -d db` instead of the Podman commands, then run the same npm commands. Use only one database on port 5432.
+
+### macOS — Homebrew
+
+Install [Homebrew](https://brew.sh/) first.
+
+**First run:**
+
+```bash
+brew install node@24 postgresql@16
+export PATH="$(brew --prefix)/opt/node@24/bin:$PATH"
+npm ci --include=optional
+bash scripts/macos/start.sh
+```
+
+**Later runs:**
+
+```bash
+bash scripts/macos/start.sh
+```
+
+Open **http://localhost:5173**. This helper creates/reuses a project-local database in `.local/postgres` on port **5433**, selects it for both runtime and migrations, and starts the normal dev launcher. It does not require a system PostgreSQL service or Docker.
+
+Ctrl+C stops the app. To stop this database without deleting data:
+
+```bash
+bash scripts/macos/stop-db.sh
+```
+
+Do not delete `.local/postgres` to fix startup problems; it contains your database. If you already manage PostgreSQL yourself, use the alternative configuration below and run `npm run dev` instead.
+
+### Windows — PowerShell + Docker Desktop
+
+Install Node.js 24 and Docker Desktop. Start Docker Desktop with Linux containers enabled.
+
+**First run, in PowerShell:**
+
+```powershell
+docker compose up -d db
+npm ci --include=optional
+npm run dev
+```
+
+**Later runs:**
+
+```powershell
+docker compose up -d db
+npm run dev
+```
+
+Open **http://localhost:5173**. Ctrl+C stops the app; `docker compose stop db` stops PostgreSQL without deleting its volume.
+
+The optional Windows launcher is `./scripts/start-dev.ps1`; it calls the same npm command. Docker is not mandatory: an existing native PostgreSQL installation works with the configuration below.
+
+### Local database (existing PostgreSQL)
+
+Skip container creation and the managed macOS helper if you already have PostgreSQL. Create an application role/database through your database administrator or SQL client, for example:
 
 ```sql
 CREATE USER blufftable WITH PASSWORD 'choose-a-password';
 CREATE DATABASE blufftable OWNER blufftable;
 ```
 
-Copy `.env.example` to `.env.local` and set `DATABASE_URL` if different from the local defaults. Keep credentials out of Git. Existing process environment variables take precedence over the env files.
+Create `.env.local` in the repository root by copying `.env.example` (`cp .env.example .env.local` in Bash, or `Copy-Item .env.example .env.local` in PowerShell). Set the URL to match your database:
 
-Stop/start the container with `podman stop blufftable-db` / `podman start blufftable-db`. Its named volume preserves data.
-
-If startup reports `ECONNREFUSED 127.0.0.1:5432` or “PostgreSQL is not accepting connections”, the local database is stopped or uses a different port. Run `podman start blufftable-db` (or `docker compose up -d db`) before starting the app. The launcher starts the backend/frontend, not PostgreSQL, and never creates or replaces a database automatically. Missing `.env` / `.env.local` notices are harmless when using the default local connection; otherwise configure `.env.local` first.
-
-## Install, build, and run
-
-Run all commands from the repository root:
-
-```bash
-npm ci --include=optional
-npm run dev
+```dotenv
+DATABASE_URL=postgresql://blufftable:your-password@127.0.0.1:5432/blufftable
 ```
 
-Open **http://localhost:5173**. Startup applies pending database migrations, waits for the backend on port **8080**, then starts Vite. Ctrl+C stops both servers without stopping PostgreSQL.
+Then run `npm ci --include=optional` once and `npm run dev`.
 
-The existing entry point remains available:
+Default container credentials are for local development only. Keep connection strings out of Git. Shell environment variables override env files; `.env.local` overrides `.env`. The managed macOS helper deliberately overrides database URLs to use its own port-5433 database.
 
-```bash
-bash scripts/start-dev.sh
-```
+### What startup does
 
-To build and run without Vite:
+The launcher applies pending migrations, starts the backend, waits for it to become healthy, and starts Vite from `frontend/`. **It does not start PostgreSQL**; only the managed macOS helper does that.
+
+- `ECONNREFUSED` / “PostgreSQL is not accepting connections”: start your database and check the configured port.
+- Missing `.env` / `.env.local` notices: harmless when using the default Linux/Windows container configuration.
+- Port already occupied: stop the previous launcher with Ctrl+C; the script will not kill unrelated processes.
+- After pulling dependency changes, rerun `npm ci --include=optional`.
+
+Backend port: `PORT` (default 8080). Vite uses 5173. Both can stay loopback-only; remote access is covered in the Tailscale section.
+
+### Root account and two-tab debugging
+
+Open the app directly through localhost to claim a persistent local root account. In the lobby, open a second tab at the **same address**, then select **Switch to debug bot** in one tab. One tab remains root; the other becomes a persistent non-root player with its own room wallet. Switching is tab-local, survives reloads, and is only available in the lobby.
+
+Use the same hostname and port consistently: `localhost`, `127.0.0.1`, a Tailscale address, and a Vercel address are different browser origins.
+
+Set `ALLOW_LOCAL_ROOT=false` to disable implicit root. Do not publicly proxy a local deployment with implicit root enabled unless the proxy marks requests `X-Bluff-Proxied: true`. Hosted Vercel requests cannot claim root, even with forged localhost headers.
+
+### Run a built app without Vite
+
+Start your database, configure `.env.local` if needed, then:
 
 ```bash
 npm run build
@@ -58,117 +163,133 @@ npm run db:migrate
 npm start
 ```
 
-Open **http://localhost:8080**. The Node backend serves both the built frontend and API/WebSocket endpoints. A normal build needs no database; migration and runtime do.
+Open **http://localhost:8080**. The Node backend now serves the built frontend, API, and WebSockets together. Building alone needs no database; migrations and runtime do.
 
-Optional settings: `PORT` (backend, default 8080), `BLUFF_STARTUP_TIMEOUT` (development startup, default 120 seconds). Development reserves port 5173 for Vite.
+For the managed macOS database, set `DATABASE_URL` in `.env.local` to its port-5433 URL before using these commands outside the helper. Keep it running, and ensure any direct migration URL targets the same database.
 
-### macOS
+## Tailscale integration — share your local server privately
 
-Install Node.js 24 and PostgreSQL 16 with Homebrew, then use `npm run dev` with your database. To retain the managed project-local PostgreSQL setup:
+Tailscale Serve gives allowed tailnet devices an HTTPS address for the app on your computer. Your computer and PostgreSQL must remain running; this is not a Vercel deployment. The integration exposes the frontend on port 5173, not PostgreSQL. See [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve) for HTTPS and access setup.
 
-```bash
-brew install node@24 postgresql@16
-npm ci --include=optional
-bash scripts/start-local-macos.sh
-```
+1. Install and connect Tailscale on the host and joining devices. Ensure the host's CLI works and your tailnet permits Serve/HTTPS.
+2. Start PostgreSQL using your OS instructions.
+3. Start the app with Tailscale enabled:
 
-This creates/reuses `.local/postgres` on port 5433. `bash scripts/stop-local.sh` stops the application; `bash scripts/stop-local-db.sh` stops this database without deleting it.
-
-### Windows
-
-Start PostgreSQL, set `DATABASE_URL` in `.env.local`, then run `npm ci --include=optional` and `npm run dev`. The PowerShell wrapper also works:
-
-```powershell
-./scripts/start-dev.ps1
-```
-
-### Root and two-tab debugging
-
-Direct localhost access grants the server runner's device its persistent root identity. In the lobby, open two tabs at the **same address** and select **Switch to debug bot** in one tab. The other remains root. The persistent bot is a separate non-root player with independent room balances. Switching is tab-local, survives reloads, and is available only in the lobby.
-
-Set `ALLOW_LOCAL_ROOT=false` to disable implicit root. Vercel always disables implicit root, regardless of request headers. Existing root accounts remain root when authenticated; no public visitor can claim root through the hosted endpoint. Do not publicly proxy a localhost deployment with root claiming enabled unless the proxy marks requests `X-Bluff-Proxied: true`.
-
-## Tailscale
-
-Connect Tailscale on the server, then:
+**Linux, or macOS/Windows with an already-running database:**
 
 ```bash
 npm run dev -- --tailnet
-# Or: bash scripts/start-dev.sh --tailnet
 ```
 
-On macOS: `bash scripts/start-local-macos.sh --tailnet`. On Windows: `./scripts/start-dev.ps1 -Tailnet`.
+**Managed macOS database:**
 
-The launcher checks Tailscale connectivity before starting and configures private HTTPS Serve access to localhost:5173. Use the printed `.ts.net` address on allowed tailnet devices. Remote devices cannot claim local root.
+```bash
+bash scripts/macos/start.sh --tailnet
+```
 
-If Serve permissions fail on Linux, configure your user as a Tailscale operator (`sudo tailscale set --operator=$USER`) and retry. To remove the exposure later: `tailscale serve reset`. The application remains loopback-bound.
+**Windows PowerShell shortcut:**
 
-## Vercel + Neon
+```powershell
+./scripts/start-dev.ps1 -Tailnet
+```
 
-1. Import this Git repository into Vercel. Use the **repository root**, not `frontend/`, as the Root Directory. The checked-in `vercel.json` builds the SPA and the TypeScript API together.
-2. Add **Neon Postgres** from Vercel's Marketplace/Storage integration and connect it to this project.
-3. Verify the deployment environment contains:
-   - `DATABASE_URL`: Neon's **pooled** connection string for application traffic.
-   - `DATABASE_URL_UNPOOLED`: the **direct** connection string for migrations. `DIRECT_URL` is also accepted.
-4. Enable Neon's isolated database branches for Preview Deployments. **Do not point preview migrations at your production database.** Production and previews must receive their respective branch URLs.
-5. Use Node.js **24**, enable **Fluid Compute**, and choose a function region near the Neon database.
-6. Deploy. The configured build command, `npm run vercel-build`, applies migrations and builds the backend/frontend. Static assets are served from `frontend/dist`; `/api/*` and `/ws` go to the Node function.
+Open the printed `.ts.net` HTTPS address on joining devices. The host can keep using localhost for root/debug-bot access; remote visitors cannot claim local root.
 
-Setup references: [Neon’s Vercel integration](https://neon.com/docs/guides/vercel-overview), [Vercel WebSockets](https://vercel.com/docs/functions/websockets).
+If the app is already running, use `npm run tailnet` to enable Serve or `npm run tailnet -- --check` to check connectivity only. If Serve permissions fail on Linux, grant your user operator access with `sudo tailscale set --operator=$USER`, then retry.
 
-Database credentials must be server environment variables, never `VITE_*` variables. No separate Java host, Redis service, or realtime provider is needed.
+To clear this device's Serve configuration, run `tailscale serve reset`. Ctrl+C stops the app but does not reset Serve or stop PostgreSQL.
 
-The backend uses Neon's pooled Postgres endpoint with a small, suspension-aware connection pool. Rooms, private hands, presence leases, payouts, and command deduplication are stored in PostgreSQL. WebSockets deliver viewer-specific snapshots; different function instances coordinate through database-backed room snapshots.
+## Vercel integration — deploy with Neon PostgreSQL
 
-Vercel rotates long-lived connections. The client automatically reconnects without abandoning a live deal. Explicitly leaving still removes the player immediately; an offline connection expires after 45 seconds and cannot recover its removed hand. Games with one or fewer participants restore pre-game wallets. Spelling deadlines are persisted and settle on the next live refresh/request even after a cold start. No background cron is required.
+Vercel hosts the frontend and Node backend; Neon supplies PostgreSQL. You do not need to keep your computer running or install PostgreSQL locally for deployment.
 
-### Migrating an existing database
+### Set up the project
 
-Back up your existing PostgreSQL database first and stop the old backend. Set the new connection URL(s), then run `npm run db:migrate`. The runner recognizes the existing Flyway V1–V9 history; it preserves account IDs, device credentials, debug bots, rooms, wallets, ranks, skins and avatars.
+1. Import the Git repository into Vercel. Use the **repository root**, not `frontend/`, as the Root Directory.
+2. Add **Neon Postgres** through the Vercel Marketplace/Storage integration and connect the database to the project. See [Neon's Vercel integration](https://neon.com/docs/guides/vercel-overview).
+3. Verify the server environment variables for each deployment environment:
 
-An unfinished **old Java** game cannot be transferred because its hands were held only in Java memory: the one-time V10 migration cancels it and restores its pre-game wallets. Subsequent TypeScript games are durable and are not reset by deployment or restart.
+   | Variable | Value |
+   | --- | --- |
+   | `DATABASE_URL` | Neon pooled URL for normal application traffic. |
+   | `DATABASE_URL_UNPOOLED` | Neon direct URL for migrations. `DIRECT_URL` is also accepted. |
 
-Migrations are transactional, lock against simultaneous deployments, and reject changed applied migration files. Do not run the old Java server after applying V10.
+4. Give preview deployments isolated Neon branches. **Never point preview migrations at the production database.** Pooled and direct URLs must target the same branch/database.
+5. Select Node.js **24**, enable **Fluid Compute**, and choose a function region near Neon. WebSocket hosting requires Fluid Compute; see [Vercel's WebSocket documentation](https://vercel.com/docs/functions/websockets).
+6. Deploy. The checked-in `vercel.json` installs dependencies, runs `npm run vercel-build` (migrations + build), serves `frontend/dist`, and routes `/api/*` and `/ws` to the Node backend. No separate frontend/backend deployment is needed.
 
-Device credentials are stored per browser origin. Changing the public hostname does not automatically copy an existing device's local storage to the new domain; database records remain intact. Keep the same localhost address for local debugging and never publish device tokens.
+Connection strings belong in server environment variables, never `VITE_*` variables or committed files. Local `.env.local` files are not automatically uploaded to Vercel.
 
-### Optional local debugging against Neon
+### What changes in hosted mode
 
-Use a **development Neon branch**, copy its pooled/direct URLs into `.env.local`, and run `npm run dev`. Local root and two-tab debugging work normally. Avoid debugging against production balances.
+Game state, presence leases, and payouts live in PostgreSQL, so backend instances do not need shared memory. The client reconnects when a function's WebSocket connection rotates. A disconnected player has a 45-second presence lease; once expired, their removed hand cannot be recovered. Explicitly leaving removes them immediately. Games with one or fewer participants restore pre-game wallets.
 
-## Verification
+Spelling deadlines settle on the next live refresh/request, including after a cold start. No cron or separate realtime service is required by this implementation.
+
+Implicit root claiming is disabled on Vercel. Existing authenticated root accounts retain their privileges, but localhost browser credentials do not automatically transfer to a new hostname. Never publish account/device tokens to move an identity.
+
+To debug locally against Neon, use a **development branch**, put its pooled/direct URLs in `.env.local`, and run `npm run dev` rather than the managed macOS database helper. Local root and two-tab debugging still work. Do not debug against production balances.
+
+## Commands and maintenance
+
+### Checks
 
 ```bash
 npm run typecheck
 npm test
+npm run test:scripts
 npm run build
-bash scripts/ci/check-scripts.sh
 ```
 
-For real database/concurrency tests, explicitly select a disposable local PostgreSQL database named `blufftable_*qa`:
+For database/browser testing, create a disposable local database named `blufftable_*qa` and use a test role with `CREATEDB`. Set `TEST_DATABASE_URL` in your shell, for example `export TEST_DATABASE_URL='postgresql://blufftable:your-password@127.0.0.1:5432/blufftable_testqa'` in Bash, or `$env:TEST_DATABASE_URL = 'postgresql://blufftable:your-password@127.0.0.1:5432/blufftable_testqa'` in PowerShell. Do not use a production database or Neon branch for destructive tests.
+
+After setting that variable:
 
 ```bash
-TEST_DATABASE_URL='postgresql://blufftable:password@127.0.0.1:5432/blufftable_testqa' npm run test:integration
-```
-
-This suite also creates/drops a disposable database to test the old Flyway upgrade; its local test role needs `CREATEDB`. Do not use a production or Neon branch for destructive tests.
-
-For the full backend plus desktop/mobile browser suite:
-
-```bash
+npm run build
 npx playwright install chromium
-TEST_DATABASE_URL='postgresql://blufftable:password@127.0.0.1:5432/blufftable_testqa' bash scripts/ci/integration.sh
+npm run test:ci
 ```
 
-## Clear application data
+This starts a test backend, runs database/concurrency and desktop/mobile browser tests, and stops the backend. CI also checks builds/tests on Linux, macOS, and Windows.
 
-Stop all application instances first, then:
+### Upgrade an existing Java-era database
+
+Back up PostgreSQL and stop the old backend before running `npm run db:migrate`. The migration runner recognizes Flyway V1–V9 and preserves identities, debug bots, rooms, wallets, purchases, and records.
+
+The one-time V10 migration cancels unfinished Java-era games and restores their pre-game wallets because those hands existed only in Java memory. Subsequent TypeScript games are database-backed. Do not run the old Java server after V10.
+
+### Clear application data
+
+Stop all application instances, wait for live presence to expire, and install PostgreSQL client tools compatible with your database version. Then:
 
 ```bash
 npm run db:clear -- --dry-run
 npm run db:clear
 ```
 
-The reset uses `DATABASE_URL_UNPOOLED` or `DATABASE_URL`, refuses active players and system databases, requires an interactive `CLEAR <database>` confirmation, and creates/verifies a `.backups/*.dump` backup with `pg_dump` / `pg_restore` before deletion. Schema and migration history are retained. Accounts, debug bots, rooms, balances, purchases and ranks are deleted; recover them by restoring that backup.
+Clearing requires typed confirmation and a verified `.backups/*.dump` backup made with `pg_dump`/`pg_restore`. It deletes accounts, rooms, wallets, purchases, and records, but retains the schema/migration history. Restore the backup to recover deleted data.
 
-Use PostgreSQL client tools of the same or a newer major version than the database server for backups.
+### Script reference
+
+Use npm commands on all platforms; shell/PowerShell wrappers are optional.
+
+| Command / script | Purpose |
+| --- | --- |
+| `npm run dev` → `scripts/dev.ts` | Migrate, start backend + Vite, check readiness, and clean up on exit. |
+| `scripts/start-dev.sh` / `scripts/start-dev.ps1` | Bash / PowerShell shortcuts to the common launcher. |
+| `npm run build` / `npm start` | Build both workspaces / serve the built app. |
+| `npm run vercel-build` | Migrate and build for Vercel. |
+| `npm run db:migrate` → `scripts/db/migrate.ts` | Apply migrations; `-- --plan` lists them without connecting. |
+| `npm run db:clear` → `scripts/db/clear.ts` | Back up and reset data; `-- --dry-run` previews only. |
+| `scripts/db/startup-error.ts` | Internal connection-error hints. |
+| `npm run tailnet` → `scripts/network/tailscale.ts` | Enable Serve; `-- --check` checks connectivity only. |
+| `npm run typecheck` / `npm test` | Type checks / frontend and backend unit tests. |
+| `npm run test:scripts` → `scripts/ci/check.ts` | Script syntax and safety checks; CI runs these on Linux. |
+| `npm run test:integration` | Database/concurrency tests against `TEST_DATABASE_URL`. |
+| `npm run test:browser` | Browser tests; requires a test backend on port 8181. |
+| `npm run test:ci` → `scripts/ci/integration.ts` | Disposable-database integration + browser suite with backend cleanup. |
+| `scripts/macos/start.sh` / `stop-db.sh` | Start managed macOS PostgreSQL + app / stop only that database. |
+| `scripts/macos/env.sh`, `scripts/macos/bin/tailscale` | Internal Homebrew and bundled Tailscale helpers. |
+| `scripts/tests/*.test.mjs` | Launcher, platform, toolchain, and database-safety regressions. |
+| `scripts/vocabulary/fetch-metadata.py` | Offline vocabulary/audio attribution maintenance; not needed to run the app. |

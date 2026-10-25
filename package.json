@@ -18,12 +18,15 @@
     "test": "npm run test --workspaces",
     "test:integration": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx server/tests/integration.test.ts",
     "test:browser": "npm run test:e2e --workspace frontend",
+    "test:scripts": "node --import tsx scripts/ci/check.ts",
+    "test:ci": "node --import tsx scripts/ci/integration.ts",
+    "tailnet": "node --import tsx scripts/network/tailscale.ts",
     "db:migrate": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx scripts/db/migrate.ts",
     "db:clear": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx scripts/db/clear.ts"
   },
   "devDependencies": {
     "tsx": "^4.20.0",
-    "typescript": "^6.0.0",
+    "typescript": "6.0.3",
     "esbuild": "^0.28.0",
     "@types/node": "^24.0.0",
     "prettier": "^3.0.0"

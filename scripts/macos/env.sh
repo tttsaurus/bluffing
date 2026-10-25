@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Source this file to use the project's Homebrew runtimes.
+# Internal helper, sourced by macOS database scripts to find Homebrew runtimes.
 if [[ "$(uname -s)" != Darwin ]]; then
   echo 'This helper is for macOS. On Linux, use bash scripts/start-dev.sh.' >&2
   return 1

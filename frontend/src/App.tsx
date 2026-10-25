@@ -191,9 +191,10 @@ function WaitingRoom() {
   const isHost = room.hostId === player.id
   const canManage = isHost || player.root
   const activeCount = room.players.filter(member => member.presence === 'ACTIVE').length
-  const plus = room.gameType === 'LIARS_DECK_PLUS'
-  const random = plus && randomDecks
-  const capacity = gameModes[room.gameType].cardsPerDeck * (random ? 1 : decks)
+  const mode = gameModes[room.gameType]
+  const plus = mode.ruleHint === 'plus'
+  const random = mode.randomDecks && randomDecks
+  const capacity = mode.cardsPerDeck * (random ? 1 : decks)
   const maxHand = Math.floor(capacity / Math.max(1, activeCount))
   const validHand = !custom || (Number.isInteger(cards) && cards >= 1 && cards <= maxHand)
   const winner = room.players.find(member => member.id === room.game?.winnerId)
@@ -209,7 +210,7 @@ function WaitingRoom() {
           {Array.from({ length: Math.max(0, 2 - room.players.length) }).map((_, i) => <div className="open-seat" key={i}><i /> Waiting for a player…</div>)}
         </section>
         {isHost && <section className="setup-panel panel" aria-label="Game setup"><div className="panel-heading"><span>GAME SETUP</span></div>
-          {plus && <label className="random-decks"><input type="checkbox" checked={randomDecks} onChange={event => setRandomDecks(event.target.checked)} />Random decks <strong>1–{Math.max(1, activeCount)}</strong></label>}
+          {mode.randomDecks && <label className="random-decks"><input type="checkbox" checked={randomDecks} onChange={event => setRandomDecks(event.target.checked)} />Random decks <strong>1–{Math.max(1, activeCount)}</strong></label>}
           {!random && <label>NUMBER OF DECKS<div className="stepper"><button onClick={() => setDecks(Math.max(1, decks - 1))}>−</button><strong>{decks}</strong><button onClick={() => setDecks(Math.min(8, decks + 1))}>＋</button></div></label>}
           <div className="toggle-line"><strong>HAND SIZE</strong><button className={`mode-toggle ${custom ? 'on' : ''}`} onClick={() => setCustom(!custom)}><span>AUTO</span><span>CUSTOM</span></button></div>
           {custom && <label>CARDS PER PLAYER<input type="number" min="1" max={maxHand} value={cards} onChange={e => setCards(Number(e.target.value))} /></label>}
@@ -295,8 +296,8 @@ function GameTable() {
             <div ref={handScroll} className="cards" aria-label="Your hand"><div className="cards-track">{game.hand.map((card, index) => <PlayingCard key={card.id} card={card} index={index}
               selected={selected.includes(card.id)} disabled={!myTurn} onClick={() => setSelected(items => items.includes(card.id) ? items.filter(id => id !== card.id) : [...items, card.id])} />)}</div></div>
           </section>}
-          {room.gameType === 'LIARS_DECK_PLUS' && <div className="battle-rules"><PlusRules cards={game.hand.filter(card => selected.includes(card.id))} rank={game.targetRank ?? rank} /></div>}
-          {room.gameType === 'LIARS_DECK_4_FUN' && <p className="battle-rules-note">A lone SPELL card triggers a 15-second spelling challenge when checked. Missed words draw cards.</p>}
+          {gameModes[room.gameType].ruleHint === 'plus' && <div className="battle-rules"><PlusRules cards={game.hand.filter(card => selected.includes(card.id))} rank={game.targetRank ?? rank} /></div>}
+          {gameModes[room.gameType].ruleHint === 'spelling' && <p className="battle-rules-note">A lone SPELL card triggers a 15-second spelling challenge when checked. Missed words draw cards.</p>}
           <aside className="battle-reward-board" aria-label="Reward and wallet">
             <div className="reward-board-heading"><strong>{gameModes[room.gameType].name}</strong><span>{game.deckCount} {game.deckCount === 1 ? 'deck' : 'decks'}</span></div>
             <Wallets room={room} playerId={player.id} />

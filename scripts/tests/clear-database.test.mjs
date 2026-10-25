@@ -2,8 +2,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 const require=createRequire(import.meta.url),loader=require.resolve('tsx')
-const script=new URL('../db/clear.ts',import.meta.url).pathname
+const script=fileURLToPath(new URL('../db/clear.ts',import.meta.url))
 function run(args,url='postgresql://user:secret@127.0.0.1:1/blufftable_safeqa') {
   return spawnSync(process.execPath,['--import',loader,script,...args],{encoding:'utf8',env:{...process.env,DATABASE_URL:url,DATABASE_URL_UNPOOLED:'',DIRECT_URL:''},timeout:10000})
 }

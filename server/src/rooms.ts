@@ -14,18 +14,6 @@ import { AppError, invariant } from './errors.ts'
 import type { Account } from './identity.ts'
 import { PRESENCE_TTL_MS } from './config.ts'
 
-export const skins = [
-  { id: 'CLASSIC', name: 'House deck', effect: 'Engraved gold', price: 0 },
-  { id: 'AURORA', name: 'Aurora', effect: 'Liquid foil', price: 750 },
-  { id: 'SUPERNOVA', name: 'Supernova', effect: 'Stellar fire', price: 1750 },
-  { id: 'PRISM', name: 'Prism', effect: 'Chromatic interference', price: 3500 },
-] satisfies { id: SkinId; name: string; effect: string; price: number }[]
-export const avatars = [
-  { id: 'DEFAULT', name: 'Default Avatar', price: 0 },
-  { id: 'BOXING_CAT', name: 'Boxing Cat', price: 0 },
-  { id: 'PORTRAIT', name: '(look)', price: 500 },
-  { id: 'GREEN_CHARACTER', name: 'mimimi', price: 5000 },
-] satisfies { id: AvatarId; name: string; price: number }[]
 interface Membership {
   id: string
   room_id: string
@@ -272,11 +260,11 @@ export class Rooms {
       game: room.game_state
         ? engine(room.game_type).view(room.game_state, actor.id)
         : null,
-      skins: skins.map((s) => ({
+      skins: engine(room.game_type).catalog.skins.map((s) => ({
         ...s,
         owned: s.price === 0 || Boolean(own?.owned_skins.includes(s.id)),
       })),
-      avatars: avatars.map((a) => ({
+      avatars: engine(room.game_type).catalog.avatars.map((a) => ({
         ...a,
         owned: a.price === 0 || Boolean(own?.owned_avatars.includes(a.id)),
       })),
@@ -500,7 +488,7 @@ export class Rooms {
   ) {
     await this.withRoom(id, (room) => {
       const m = member(room, actor.id),
-        catalog = kind === 'skins' ? skins : avatars
+        catalog = engine(room.game_type).catalog[kind]
       const item = catalog.find((item) => item.id === key)
       invariant(item, 'Unknown cosmetic', 400)
       const owned = kind === 'skins' ? m.owned_skins : m.owned_avatars

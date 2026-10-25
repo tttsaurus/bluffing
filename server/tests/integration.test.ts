@@ -333,6 +333,24 @@ test('host/root can recover a missing engine state and restore its wallet checkp
   assert.ok(stopped.players.every((p) => p.balance === 100))
   assert.ok(stopped.records.every((r) => r.wins === 0))
 })
+test('all engine room types inherit classic shop contents without sharing ownership or wallets', async () => {
+  let expected: unknown
+  for (const type of ['LIARS_DECK', 'LIARS_DECK_PLUS', 'LIARS_DECK_4_FUN'] as const) {
+    const f = await setup(type)
+    const view = await roomsA.view(f.id, f.host)
+    const catalog = { skins: view.skins, avatars: view.avatars }
+    if (!expected) expected = catalog
+    else assert.deepEqual(catalog, expected)
+    await first.query('UPDATE room_memberships SET balance=1000 WHERE room_id=$1 AND player_id=$2', [f.id, f.host.id])
+    await roomsA.cosmetic(f.id, f.host, 'skins', 'AURORA', true)
+    const own = await roomsA.view(f.id, f.host), other = await roomsB.view(f.id, f.players[1].actor)
+    assert.equal(own.players.find(p => p.id === f.host.id)!.balance, 250)
+    assert.equal(own.skins.find(s => s.id === 'AURORA')!.owned, true)
+    assert.equal(other.skins.find(s => s.id === 'AURORA')!.owned, false)
+    assert.equal(other.players.find(p => p.id === f.host.id)!.equippedSkin, 'AURORA')
+    assert.equal(other.players.find(p => p.id !== f.host.id)!.balance, 0)
+  }
+})
 test('parallel purchases never overdraw a room wallet, and ownership is per player', async () => {
   const f = await setup()
   await first.query(

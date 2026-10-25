@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { LiarsDeckEngine, engine } from '../src/game/engine.ts'
+import { LiarsDeckEngine, LiarsDeckPlusEngine, LiarsDeck4FunEngine, engine } from '../src/game/engine.ts'
 import { RANKS, type GameState } from '../src/game/state.ts'
 import type { Card, GameType } from '../../shared/contracts.ts'
 
@@ -13,6 +13,23 @@ const card = (rank: string, suit: Card['suit'] = 'SPADES'): Card => ({
   id: randomUUID(),
   rank,
   suit,
+})
+test('each mode registers a distinct engine subclass and inherits the immutable classic shop', () => {
+  const classic = engine('LIARS_DECK'), plus = engine('LIARS_DECK_PLUS'), fun = engine('LIARS_DECK_4_FUN')
+  assert.equal(classic.constructor, LiarsDeckEngine)
+  assert.equal(plus.constructor, LiarsDeckPlusEngine)
+  assert.equal(fun.constructor, LiarsDeck4FunEngine)
+  assert.ok(plus instanceof LiarsDeckEngine && fun instanceof LiarsDeckEngine)
+  for (const rules of [plus, fun]) {
+    assert.equal(rules.catalog, classic.catalog)
+    assert.equal(rules.start, classic.start)
+    assert.equal(rules.command, classic.command)
+    assert.equal(rules.view, classic.view)
+  }
+  assert.equal(Object.isFrozen(classic.catalog.skins), true)
+  assert.equal(Object.isFrozen(classic.catalog.avatars[0]), true)
+  assert.equal(Reflect.set(classic.catalog.skins[0], 'price', 99), false)
+  assert.equal(classic.catalog.skins[0].price, 0)
 })
 function fixture(type: GameType = 'LIARS_DECK', players = [a, b]) {
   const rules = engine(type),
@@ -63,6 +80,41 @@ for (const type of [
   'LIARS_DECK_PLUS',
   'LIARS_DECK_4_FUN',
 ] as const) {
+  test(`${type} rejects every other mode's state before reading or mutating it`, () => {
+    const rules = engine(type)
+    for (const other of ['LIARS_DECK', 'LIARS_DECK_PLUS', 'LIARS_DECK_4_FUN'] as const) {
+      if (other === type) continue
+      const state = fixture(other).state, before = structuredClone(state)
+      for (const operation of [
+        () => rules.command(state, a, { roomId: room, action: 'FOLD' }),
+        () => rules.depart(state, a), () => rules.tick(state), () => rules.view(state, a),
+      ]) {
+        assert.throws(operation, /different engine/)
+        assert.deepEqual(state, before)
+      }
+    }
+  })
+  test(`${type} inherits classic fold-cycle payouts without paying early`, () => {
+    const { state } = fixture(type)
+    play(state, a)
+    fold(state, b)
+    assert.equal(state.earnings[a] ?? 0, 0)
+    assert.equal(state.pendingClaim?.playerId, a)
+    fold(state, a)
+    assert.equal(state.earnings[a], 10)
+    assert.equal(state.pool.length, 0)
+    assert.equal(state.plays.length, 0)
+    assert.equal(state.pendingClaim, null)
+  })
+  test(`${type} inherits classic challenge privacy, rewards and non-folded marker`, () => {
+    const { state, rules } = fixture(type)
+    play(state, a, 'A', [state.hands[a][1]])
+    challenge(state, b)
+    assert.equal(state.earnings[b], 20)
+    assert.equal(state.lastNonFoldedPlayerId, b)
+    assert.equal(rules.view(state, a).plays!.at(-1)!.revealedCards.length, 0)
+    assert.equal(rules.view(state, b).plays!.at(-1)!.revealedCards[0].rank, '2')
+  })
   test(`${type} deals unique cards, stable random seats, and its own deck composition`, () => {
     const rules = engine(type),
       state = rules.start(room, [a, b, c], {

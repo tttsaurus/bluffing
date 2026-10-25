@@ -49,7 +49,7 @@ if (
   const args = process.argv.slice(2)
   if (args.includes('--help'))
     console.log(
-      'Usage: bash scripts/network/tailscale.sh [--check]. Connect Tailscale first; Serve exposes localhost:5173 privately to your tailnet.'
+      'Usage: npm run tailnet -- [--check]. Connect Tailscale first; Serve exposes localhost:5173 privately to your tailnet.'
     )
   else {
     if (args.some((arg) => arg !== '--check')) throw new Error('Unknown option')

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The macOS app bundles its CLI without necessarily adding it to PATH.
+# Internal adapter: the macOS app may not add its CLI to PATH.
 for app_binary in "/Applications/Tailscale.app/Contents/MacOS/Tailscale" \
                   "$HOME/Applications/Tailscale.app/Contents/MacOS/Tailscale"; do
   if [[ -x "$app_binary" ]]; then
