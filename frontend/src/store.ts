@@ -42,6 +42,8 @@ const debugIdentity = readDebugIdentity()
 const initialPlayer = debugIdentity?.player ?? rootPlayer
 let deviceToken = debugIdentity?.token ?? rootToken
 let identityEpoch = 0
+// Reuse only across reconnects in this page; identity switches receive a fresh lease.
+let liveSessionId = crypto.randomUUID()
 let navigation = 0
 let reconnectTimer: number | undefined
 let connectionTimer: number | undefined
@@ -83,7 +85,12 @@ function isLoopbackBrowser() {
 }
 
 function identityEndpoint() {
-  return isLoopbackBrowser() ? `${import.meta.env.VITE_LOCAL_API_URL || 'http://127.0.0.1:8080'}/api/players` : '/api/players'
+  if (!isLoopbackBrowser()) return '/api/players'
+  // Vite uses a separate backend; a built self-hosted app uses its own origin,
+  // including custom PORT values. Never bake a localhost API URL into hosting.
+  return import.meta.env.DEV
+    ? `${import.meta.env.VITE_LOCAL_API_URL || 'http://127.0.0.1:8080'}/api/players`
+    : '/api/players'
 }
 
 function restoreIdentity(displayName: string, legacyPlayerId?: string) {
@@ -126,6 +133,7 @@ export const useGameStore = create<Store>((set, get) => ({
       window.clearTimeout(connectionTimer)
       if (get().socket) retireSocket(get().socket!)
       deviceToken = result.deviceToken
+      liveSessionId = crypto.randomUUID()
       set({ player: result.player, debugMode: !returning, socket: null, connected: false, rooms: [], loading: false })
       connect(set, get)
       await get().loadRooms()
@@ -293,7 +301,7 @@ export const useGameStore = create<Store>((set, get) => ({
       set({ error: 'Live connection is not ready yet' })
       return
     }
-    socket.send(JSON.stringify({ type: 'GAME_COMMAND', payload: { roomId: room.id, action, cardIds, declaredRank, spellingId, answer } }))
+    socket.send(JSON.stringify({ type: 'GAME_COMMAND', payload: { roomId: room.id, action, cardIds, declaredRank, spellingId, answer, requestId: crypto.randomUUID(), gameId: room.game?.gameId } }))
   },
 
   clearError: () => set({ error: null }),
@@ -322,10 +330,8 @@ function connect(set: (partial: Partial<Store>) => void, get: () => Store) {
     window.clearTimeout(connectionTimer)
     retireSocket(socket)
     set({ connected: false })
-    if (get().room?.game?.phase === 'ACTIVE') {
-      ++navigation
-      set({ room: null, loading: false, error: 'Disconnected. You have left this deal; your room balance is safe.' })
-    }
+    // Function rotation is not a player quitting. Keep the table while its
+    // database lease is alive; expired/departed players are rejected on resync.
     if (restoreDevice && get().player) {
       const profile = get().player!
       void restoreIdentity(profile.displayName, profile.id).then(player => {
@@ -340,7 +346,7 @@ function connect(set: (partial: Partial<Store>) => void, get: () => Store) {
   const authenticate = () => {
     if (retired || get().socket !== socket || authSent) return
     try {
-      socket.send(JSON.stringify({ type: 'AUTH', payload: { deviceToken } }))
+      socket.send(JSON.stringify({ type: 'AUTH', payload: { deviceToken, sessionId: liveSessionId } }))
       authSent = true
     } catch { disconnect() }
   }

@@ -10,7 +10,11 @@ frontend/test-results/
 frontend/vite.config.js
 frontend/vite.config.d.ts
 
-# Gradle / Java build output and local caches
+# Backend builds, reports, and local caches
+server/dist/
+server/reports/
+.vercel/
+coverage/
 build/
 .gradle/
 .gradle-local/

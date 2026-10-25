@@ -1,0 +1,20 @@
+{
+  "name": "@bluff-table/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && node --import tsx src/game/words.ts && esbuild src/local.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/local.js",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx tests/engine.test.ts && node --import tsx tests/identity.test.ts && node --import tsx tests/config.test.ts && node --import tsx tests/audio.test.ts"
+  },
+  "dependencies": {
+    "pg": "^8.16.0",
+    "ws": "^8.18.0",
+    "@vercel/functions": "3.6.1",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.0",
+    "@types/ws": "^8.18.0"
+  }
+}

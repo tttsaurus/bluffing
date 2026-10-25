@@ -9,5 +9,4 @@ if ! command -v brew >/dev/null 2>&1; then
   return 1
 fi
 bluff_brew_prefix="$(brew --prefix)"
-export JAVA_HOME="$bluff_brew_prefix/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"
-export PATH="$JAVA_HOME/bin:$bluff_brew_prefix/opt/node@24/bin:$bluff_brew_prefix/opt/postgresql@16/bin:$bluff_brew_prefix/opt/coreutils/libexec/gnubin:$bluff_brew_prefix/bin:$PATH"
+export PATH="$bluff_brew_prefix/opt/node@24/bin:$bluff_brew_prefix/opt/postgresql@16/bin:$bluff_brew_prefix/bin:$PATH"

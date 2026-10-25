@@ -1,22 +1,9 @@
+import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { test } from 'node:test'
-
-const script = new URL('../ci/integration.sh', import.meta.url).pathname
-const run = (database, ...args) => spawnSync('bash', [script, ...args], {
-  env: { ...process.env, QA_DATABASE: database }, encoding: 'utf8', timeout: 3000,
-})
-
-for (const database of ['', 'blufftable', 'postgres', 'production_qa', 'blufftable_qa; DROP DATABASE x']) {
-  test(`integration refuses non-disposable target ${JSON.stringify(database)}`, () => {
-    const result = run(database)
-    assert.equal(result.status, 2)
-    assert.match(result.stderr, /explicit disposable/)
+for(const target of ['', 'postgresql://user@127.0.0.1:1/postgres','postgresql://user@127.0.0.1:1/blufftable','postgresql://user@127.0.0.1:1/production_qa']) {
+  test('integration refuses non-disposable target '+target,()=>{
+    const result=spawnSync('bash',[new URL('../ci/integration.sh',import.meta.url).pathname],{encoding:'utf8',env:{...process.env,TEST_DATABASE_URL:target},timeout:10000})
+    assert.notEqual(result.status,0);assert.match(result.stderr,/disposable blufftable_\*qa/);assert.doesNotMatch(result.stderr,/ECONNREFUSED/)
   })
 }
-
-test('integration refuses a missing server artifact before connecting to PostgreSQL', () => {
-  const result = run('blufftable_testqa', '/tmp/bluff-ci-deliberately-missing-server.jar')
-  assert.equal(result.status, 2)
-  assert.match(result.stderr, /Build the server jar first/)
-})

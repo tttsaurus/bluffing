@@ -9,10 +9,9 @@ for argument in "$@"; do
   esac
 done
 source "$project_root/scripts/local-env.sh"
-for required in python3 initdb pg_ctl psql createdb; do
+for required in node npm initdb pg_ctl psql createdb; do
   command -v "$required" >/dev/null 2>&1 || { echo "Required command not found: $required" >&2; exit 1; }
 done
-[[ -x "$bluff_brew_prefix/bin/bash" ]] || { echo 'Install Homebrew Bash: brew install bash' >&2; exit 1; }
 export PATH="$project_root/scripts/macos-bin:$PATH"
 data_dir="$project_root/.local/postgres"
 mkdir -p "$project_root/.local"
@@ -35,9 +34,7 @@ if [[ "$(psql -h 127.0.0.1 -p 5433 -U blufftable -d postgres -tAc "SELECT 1 FROM
   createdb -h 127.0.0.1 -p 5433 -U blufftable blufftable
 fi
 unset PGPASSWORD
-export DB_URL="jdbc:postgresql://127.0.0.1:5433/blufftable"
-export DB_USERNAME=blufftable
-export DB_PASSWORD=blufftable
+export DATABASE_URL="postgresql://blufftable:blufftable@127.0.0.1:5433/blufftable"
 export BLUFF_STARTUP_TIMEOUT="${BLUFF_STARTUP_TIMEOUT:-600}"
 echo "$$" > "$pid_file"
-exec "$bluff_brew_prefix/bin/bash" "$project_root/scripts/start-dev.sh" "$@"
+exec bash "$project_root/scripts/start-dev.sh" "$@"

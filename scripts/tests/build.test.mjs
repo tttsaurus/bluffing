@@ -1,52 +1,22 @@
+import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
-import { mkdtemp, mkdir, cp, writeFile, readFile, rm } from 'node:fs/promises'
+import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'node:test'
-
-const scripts = new URL('../', import.meta.url)
-
-async function fixture(t, fail = '') {
-  const root = await mkdtemp(join(tmpdir(), 'bluff-build-test-'))
-  t.after(() => rm(root, { recursive: true, force: true }))
-  await mkdir(join(root, 'scripts/lib'), { recursive: true })
-  await mkdir(join(root, 'frontend'))
-  await mkdir(join(root, 'bin'))
-  await cp(new URL('build.sh', scripts), join(root, 'scripts/build.sh'))
-  await cp(new URL('lib/common.sh', scripts), join(root, 'scripts/lib/common.sh'))
-  const recorder = '#!/bin/bash\nprintf "%s\\n" "$*" >> "$BUILD_TEST_ROOT/events"\n'
-  await writeFile(join(root, 'gradlew'), recorder + (fail === 'backend' ? 'exit 17\n' : ''), { mode: 0o644 })
-  await writeFile(join(root, 'bin/java'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
-  await writeFile(join(root, 'bin/npm'), recorder + 'if [[ "$*" == *" ci "* && "$BUILD_TEST_FAIL" == dependencies ]]; then exit 18; fi\n', { mode: 0o755 })
-  const env = { ...process.env, PATH: `${join(root, 'bin')}:${process.env.PATH}`, BUILD_TEST_ROOT: root, BUILD_TEST_FAIL: fail }
-  return {
-    run: (...args) => spawnSync('bash', [join(root, 'scripts/build.sh'), ...args], { env, cwd: tmpdir(), encoding: 'utf8', timeout: 3000 }),
-    events: async () => (await readFile(join(root, 'events'), 'utf8').catch(() => '')).trim().split('\n').filter(Boolean),
-  }
+import { spawnSync } from 'node:child_process'
+function run(args=[],failure='') {
+  const root=mkdtempSync(join(tmpdir(),'bluff-ts-build-'))
+  try {
+    mkdirSync(join(root,'scripts'));mkdirSync(join(root,'bin'))
+    copyFileSync(new URL('../build.sh',import.meta.url),join(root,'scripts/build.sh'))
+    const log=join(root,'calls')
+    writeFileSync(join(root,'bin/npm'),'#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALLS"\nif [ "$1" = "$FAIL" ]; then exit 17; fi\n',{mode:0o755})
+    const result=spawnSync('bash',[join(root,'scripts/build.sh'),...args],{encoding:'utf8',env:{...process.env,PATH:join(root,'bin')+':'+process.env.PATH,CALLS:log,FAIL:failure}})
+    let calls=[];try{calls=readFileSync(log,'utf8').trim().split('\n')}catch{}
+    return {...result,calls}
+  } finally {rmSync(root,{recursive:true,force:true})}
 }
-
-test('one build entry point builds the backend and locked frontend without a database', async t => {
-  const f = await fixture(t)
-  const result = f.run()
-  assert.equal(result.status, 0, result.stderr)
-  assert.deepEqual(await f.events(), ['--console=plain :server:bootJar', '--prefix frontend ci --include=optional', '--prefix frontend run build'])
-  assert.match(result.stdout, /server\/build\/libs\/bluff-table.jar and frontend\/dist/)
-})
-test('failed backend build stops before frontend installation', async t => {
-  const f = await fixture(t, 'backend')
-  assert.equal(f.run().status, 17)
-  assert.deepEqual(await f.events(), ['--console=plain :server:bootJar'])
-})
-test('failed dependency installation prevents a frontend build', async t => {
-  const f = await fixture(t, 'dependencies')
-  assert.equal(f.run().status, 18)
-  assert.equal((await f.events()).length, 2)
-})
-test('build help and invalid arguments do not run either build', async t => {
-  const f = await fixture(t)
-  assert.equal(f.run('--help').status, 0)
-  assert.equal(f.run('--unknown').status, 2)
-  assert.equal(f.run('extra', 'arguments').status, 2)
-  assert.deepEqual(await f.events(), [])
-})
+test('one root build installs locked dependencies and builds both TypeScript workspaces',()=>{const r=run();assert.equal(r.status,0,r.stderr);assert.deepEqual(r.calls,['ci --include=optional','run build'])})
+test('installation failure prevents builds',()=>{const r=run([],'ci');assert.equal(r.status,17);assert.equal(r.calls.length,1)})
+test('build failure is propagated',()=>{assert.equal(run([],'run').status,17)})
+test('help and invalid build flags perform no installation or build',()=>{assert.equal(run(['--help']).status,0);assert.deepEqual(run(['--help']).calls,[]);assert.equal(run(['--invalid']).status,2)})

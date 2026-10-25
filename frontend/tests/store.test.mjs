@@ -318,14 +318,16 @@ test('closing an obsolete socket cannot create a reconnect loop', async () => {
   assert.equal(f.store.getState().connected,true)
 })
 
-test('live disconnect leaves the deal instead of syncing back into it', async () => {
+test('serverless transport reconnect preserves the deal and reuses its live-session lease', async () => {
   const f = fixture(); await f.identify()
   f.store.setState({room:{...room,game:{phase:'ACTIVE'}}})
   f.sockets[0].close()
-  assert.equal(f.store.getState().room,null)
+  assert.equal(f.store.getState().room.id,room.id)
+  const session=f.sockets[0].sent.find(m=>m.type==='AUTH').payload.sessionId
   f.timers[0]()
-  f.sockets[1].emit('CONNECTED',{playerId:player.id})
-  assert.equal(f.sockets[1].sent.filter(m=>m.type === 'SYNC_ROOM').length,0)
+  f.sockets[1].open();f.sockets[1].emit('CONNECTED',{playerId:player.id})
+  assert.equal(f.sockets[1].sent.find(m=>m.type==='AUTH').payload.sessionId,session)
+  assert.equal(f.sockets[1].sent.filter(m=>m.type === 'SYNC_ROOM').length,1)
 })
 
 test('server rejection removes the selected room and displays the reason', async () => {

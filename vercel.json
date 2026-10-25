@@ -1,0 +1,19 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "npm ci --include=optional",
+  "buildCommand": "npm run vercel-build",
+  "outputDirectory": "frontend/dist",
+  "functions": {
+    "api/server.ts": {
+      "maxDuration": 300,
+      "includeFiles": "server/resources/spelling/**"
+    }
+  },
+  "routes": [
+    { "src": "/ws", "dest": "/api/server" },
+    { "src": "/api/.*", "dest": "/api/server" },
+    { "handle": "filesystem" },
+    { "src": "/.*", "dest": "/index.html" }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "name": "bluff-table",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.22.2"
+  },
+  "workspaces": [
+    "frontend",
+    "server"
+  ],
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx scripts/dev.ts",
+    "start": "node --env-file-if-exists=.env --env-file-if-exists=.env.local server/dist/local.js",
+    "build": "npm run build --workspace server && npm run build --workspace frontend",
+    "vercel-build": "npm run db:migrate && npm run build",
+    "typecheck": "npm run typecheck --workspaces && tsc -p tsconfig.json",
+    "test": "npm run test --workspaces",
+    "test:integration": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx server/tests/integration.test.ts",
+    "test:browser": "npm run test:e2e --workspace frontend",
+    "db:migrate": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx scripts/db/migrate.ts",
+    "db:clear": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx scripts/db/clear.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.0",
+    "typescript": "^6.0.0",
+    "esbuild": "^0.28.0",
+    "@types/node": "^24.0.0",
+    "prettier": "^3.0.0"
+  }
+}

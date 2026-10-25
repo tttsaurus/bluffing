@@ -1,167 +1,48 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, writeFile, cp, rm, chmod } from 'node:fs/promises'
+import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { setTimeout as pause } from 'node:timers/promises'
-
-const scripts = new URL('../', import.meta.url)
-const quote = value => `'${value.replaceAll("'", "'\\''")}'`
-
-// Isolated processes and mocked commands exercise the actual shell scripts.
-// No PostgreSQL, real game servers, or Tailscale configuration are used.
-async function fixture(t, overrides = {}, tailnet = false) {
-  const root = await mkdtemp(join(tmpdir(), 'bluff-start-test-'))
-  const bin = join(root, 'bin')
-  await mkdir(bin)
-  await mkdir(join(root, 'scripts'))
-  await mkdir(join(root, 'frontend/node_modules/vite/bin'), { recursive: true })
-  await cp(new URL('start-dev.sh', scripts), join(root, 'scripts/start-dev.sh'))
-  for (const directory of ['lib', 'dev', 'network']) {
-    await cp(new URL(directory, scripts), join(root, 'scripts', directory), { recursive: true })
-  }
-  // Match the lost executable bits seen on copied checkouts.
-  await chmod(join(root, 'scripts/network/tailscale.sh'), 0o644)
-  const server = `
-    const fs = require('node:fs');
-    const path = require('node:path');
-    const name = process.argv[2];
-    const record = value => fs.appendFileSync(path.join(process.env.MOCK_ROOT, 'events'), value + '\\n');
-    record(name + '-started');
-    fs.writeFileSync(path.join(process.env.MOCK_ROOT, name + '.pid'), String(process.pid));
-    if (name === 'frontend') {
-      if (!fs.existsSync(path.join(process.env.MOCK_ROOT, 'backend-ready'))) process.exit(41);
-      if (process.env.BLUFF_BACKEND_URL !== 'http://127.0.0.1:45871' || process.env.VITE_LOCAL_API_URL !== process.env.BLUFF_BACKEND_URL) process.exit(42);
-    }
-    if (process.env.MOCK_FAIL === name) process.exit(17);
-    process.on('SIGTERM', () => { record(name + '-stopped'); process.exit(0); });
-    setInterval(() => {
-      if (name === 'frontend' && fs.existsSync(path.join(process.env.MOCK_ROOT, 'exit-frontend'))) process.exit(23);
-    }, 25);
-  `
-  await writeFile(join(root, 'server.cjs'), server)
-  await writeFile(join(root, 'gradlew'), `#!/bin/sh\nexec node ${quote(join(root, 'server.cjs'))} backend\n`, { mode: 0o644 })
-  await writeFile(join(root, 'frontend/node_modules/vite/bin/vite.js'), `process.argv[2] = 'frontend';\n${server}`, { mode: 0o644 })
-  await writeFile(join(bin, 'java'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
-  await writeFile(join(bin, 'node'), `#!/bin/sh
-if [ "$1" = "--input-type=module" ]; then
-  if [ "$MOCK_FAIL" = dependencies ]; then echo 'Cannot find native binding' >&2; exit 1; fi
-  exit 0
-fi
-exec ${quote(process.execPath)} "$@"
-`, { mode: 0o755 })
-  await writeFile(join(bin, 'curl'), `#!${process.execPath}
-const fs = require('node:fs');
-const path = require('node:path');
-const root = process.env.MOCK_ROOT;
-const health = process.argv.at(-1).endsWith('/api/health');
-const ready = path.join(root, health ? 'backend-ready' : 'frontend-ready');
-const pid = path.join(root, health ? 'backend.pid' : 'frontend.pid');
-if (!fs.existsSync(pid) || (health && process.env.MOCK_FAIL === 'health')
-    || process.env.MOCK_FAIL === (health ? 'backend' : 'frontend')) process.exit(22);
-if (!fs.existsSync(ready)) {
-  fs.writeFileSync(ready, 'ready');
-  fs.appendFileSync(path.join(root, 'events'), (health ? 'backend-ready' : 'frontend-ready') + '\\n');
+import { join, dirname } from 'node:path'
+import { createRequire } from 'node:module'
+import { spawn, spawnSync } from 'node:child_process'
+const require=createRequire(import.meta.url),loader=require.resolve('tsx')
+function fixture(env={}) {
+  const root=mkdtempSync(join(tmpdir(),'bluff-ts-dev-')),calls=join(root,'calls')
+  for(const path of ['scripts/db','scripts/network','server/src','node_modules/vite/bin'])mkdirSync(join(root,path),{recursive:true})
+  writeFileSync(join(root,'package.json'),'{"type":"module"}')
+  symlinkSync(dirname(require.resolve('tsx/package.json')),join(root,'node_modules/tsx'))
+  copyFileSync(new URL('../dev.ts',import.meta.url),join(root,'scripts/dev.ts'))
+  writeFileSync(join(root,'server/src/config.ts'),'export const port=()=>Number(process.env.PORT);export const databaseUrl=()=>"unused";')
+  writeFileSync(join(root,'scripts/db/migrate.ts'),'import{appendFileSync}from"node:fs";export async function migrate(){appendFileSync(process.env.CALLS,"migration\\n");if(process.env.FAIL_MIGRATION)throw Error("Migration failed");}')
+  writeFileSync(join(root,'scripts/network/tailscale.ts'),'export async function checkTailnet(){if(process.env.FAIL_TAILNET)throw Error("Tailscale is not connected");}export async function enableTailnet(){}')
+  writeFileSync(join(root,'node_modules/vite/package.json'),'{"name":"vite","version":"1.0.0","type":"module"}')
+  const code=`import {createServer} from 'node:http';import{appendFileSync}from'node:fs';
+const role=process.argv.includes('--host')?'frontend':'backend';
+if(process.env['FAIL_'+role.toUpperCase()])process.exit(role==='backend'?17:18);
+appendFileSync(process.env.CALLS,role+' started\\n');
+const server=createServer((req,res)=>{appendFileSync(process.env.CALLS,role+' healthy\\n');res.end('ok')});
+server.listen(role==='backend'?Number(process.env.PORT):5173,'127.0.0.1');
+process.on('SIGTERM',()=>{appendFileSync(process.env.CALLS,role+' stopped\\n');server.close(()=>process.exit(0))});`
+  writeFileSync(join(root,'server/src/local.ts'),code);writeFileSync(join(root,'node_modules/vite/bin/vite.js'),code)
+  let output='',child
+  const environment={...process.env,PORT:'45871',BLUFF_STARTUP_TIMEOUT:'5',CALLS:calls,...env}
+  return {root,calls,get output(){return output},environment,
+    start(args=[]){child=spawn(process.execPath,['--import',loader,join(root,'scripts/dev.ts'),...args],{cwd:root,env:environment,stdio:['ignore','pipe','pipe']});child.stdout.on('data',data=>output+=data);child.stderr.on('data',data=>output+=data);return child},
+    log(){return existsSync(calls)?readFileSync(calls,'utf8'):''},
+    async wait(text){const end=Date.now()+12000;while(Date.now()<end){if(output.includes(text))return;await new Promise(resolve=>setTimeout(resolve,30))}throw Error(output)},
+    async clean(){if(child&&child.exitCode===null){child.kill('SIGTERM');await new Promise(resolve=>child.once('exit',resolve))}rmSync(root,{recursive:true,force:true})}}
 }
-`, { mode: 0o755 })
-  await writeFile(join(bin, 'tailscale'), `#!${process.execPath}
-const fs = require('node:fs');
-const path = require('node:path');
-if (process.argv[2] === 'status') {
-  console.log(JSON.stringify({ BackendState: process.env.MOCK_FAIL === 'tailnet' ? 'NeedsLogin' : 'Running' }));
-} else if (process.argv.includes('--bg')) {
-  fs.appendFileSync(path.join(process.env.MOCK_ROOT, 'events'), 'tailnet-served\\n');
-  console.log('Tailnet ready');
+test('launcher help and invalid flags do not migrate or start a server',async()=>{
+  const f=fixture()
+  try{for(const args of [['--help'],['--invalid']]){const result=spawnSync(process.execPath,['--import',loader,join(f.root,'scripts/dev.ts'),...args],{cwd:f.root,env:f.environment,encoding:'utf8'});assert.equal(result.status,args[0]==='--help'?0:1);assert.equal(f.log(),'')}}finally{await f.clean()}
+})
+test('backend health precedes frontend startup; TERM cleans both and its own PID file',async()=>{
+  const f=fixture()
+  try{f.start();await f.wait('Bluff Table is ready');const log=f.log();assert.ok(log.indexOf('backend healthy')<log.indexOf('frontend started'));assert.ok(existsSync(join(f.root,'.local/app.pid')))}finally{await f.clean()}
+})
+for(const [env,message] of [[{FAIL_MIGRATION:'1'},'Migration failed'],[{FAIL_TAILNET:'1'},'Tailscale is not connected'],[{FAIL_BACKEND:'1'},'A development server stopped'],[{FAIL_FRONTEND:'1'},'A development server stopped']]) {
+ test('startup failure cleans up safely: '+Object.keys(env)[0],async()=>{
+   const f=fixture(env)
+   try{const child=f.start(env.FAIL_TAILNET?['--tailnet']:[]);await new Promise(resolve=>child.once('exit',resolve));assert.notEqual(child.exitCode,0,f.output);assert.match(f.output,new RegExp(message));if(env.FAIL_TAILNET||env.FAIL_MIGRATION)assert.doesNotMatch(f.log(),/started/);if(env.FAIL_FRONTEND)assert.match(f.log(),/backend stopped/)}finally{await f.clean()}
+ })
 }
-`, { mode: 0o755 })
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, MOCK_ROOT: root,
-    DB_URL: 'jdbc:postgresql://unused.invalid/disposable', PORT: '45871', BLUFF_STARTUP_TIMEOUT: '5', ...overrides }
-  // These are plain mock services, not nested Node test runner processes.
-  delete env.NODE_TEST_CONTEXT
-  const child = spawn('bash', [join(root, 'scripts/start-dev.sh'), ...(tailnet ? ['--tailnet'] : [])], {
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  let output = ''
-  child.stdout.on('data', value => { output += value })
-  child.stderr.on('data', value => { output += value })
-  const done = new Promise((resolve, reject) => { child.once('error', reject); child.once('close', (code, signal) => resolve({ code, signal })) })
-  const waitFor = async predicate => {
-    const deadline = Date.now() + 12000
-    while (Date.now() < deadline) {
-      if (predicate(output)) return
-      if (child.exitCode !== null) throw new Error(output)
-      await pause(25)
-    }
-    throw new Error(`Startup test timed out: ${output}`)
-  }
-  t.after(async () => {
-    if (child.exitCode === null) child.kill('SIGTERM')
-    await done
-    await rm(root, { recursive: true, force: true })
-  })
-  return { root, child, done, waitFor, output: () => output,
-    events: async () => (await readFile(join(root, 'events'), 'utf8').catch(() => '')).trim().split('\n').filter(Boolean),
-    assertStopped: async () => {
-      for (const name of ['backend', 'frontend']) {
-        const id = await readFile(join(root, `${name}.pid`), 'utf8').catch(() => null)
-        if (id) assert.throws(() => process.kill(Number(id), 0), { code: 'ESRCH' })
-      }
-    },
-  }
-}
-
-test('backend is ready before Vite starts; copied scripts run and TERM cleans up both servers', async t => {
-  const f = await fixture(t, {}, true)
-  await f.waitFor(output => output.includes('Press Ctrl+C'))
-  assert.deepEqual(await f.events(), ['backend-started', 'backend-ready', 'frontend-started', 'frontend-ready', 'tailnet-served'])
-  f.child.kill('SIGTERM')
-  assert.equal((await f.done).code, 143)
-  await f.assertStopped()
-})
-
-test('native dependency failure is caught before either server starts', async t => {
-  const f = await fixture(t, { MOCK_FAIL: 'dependencies' })
-  assert.equal((await f.done).code, 1)
-  assert.match(f.output(), /npm ci --include=optional/)
-  assert.deepEqual(await f.events(), [])
-})
-
-test('disconnected tailnet is caught before either server starts', async t => {
-  const f = await fixture(t, { MOCK_FAIL: 'tailnet' }, true)
-  assert.equal((await f.done).code, 1)
-  assert.match(f.output(), /NeedsLogin/)
-  assert.deepEqual(await f.events(), [])
-})
-
-test('backend startup failure is reported and never opens Vite', async t => {
-  const f = await fixture(t, { MOCK_FAIL: 'backend' })
-  assert.equal((await f.done).code, 1)
-  assert.match(f.output(), /Spring Boot stopped with status 17/)
-  assert.ok(!(await f.events()).includes('frontend-started'))
-  await f.assertStopped()
-})
-
-test('backend readiness has a deadline and cleans up the process on timeout', async t => {
-  const f = await fixture(t, { MOCK_FAIL: 'health', BLUFF_STARTUP_TIMEOUT: '1' })
-  assert.equal((await f.done).code, 1)
-  assert.match(f.output(), /Timed out after 1 seconds/)
-  assert.ok(!(await f.events()).includes('frontend-started'))
-  await f.assertStopped()
-})
-
-test('frontend startup failure stops the already-running backend', async t => {
-  const f = await fixture(t, { MOCK_FAIL: 'frontend' })
-  assert.equal((await f.done).code, 1)
-  assert.match(f.output(), /Vite stopped with status 17/)
-  await f.assertStopped()
-})
-
-test('an unexpected runtime exit stops the other server and preserves the exit status', async t => {
-  const f = await fixture(t)
-  await f.waitFor(output => output.includes('Press Ctrl+C'))
-  await writeFile(join(f.root, 'exit-frontend'), '')
-  assert.equal((await f.done).code, 23)
-  await f.assertStopped()
-})

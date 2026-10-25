@@ -6,7 +6,7 @@ Resume-safe; uses curl and the Python standard library only.
 import hashlib, html, json, re, subprocess, time, urllib.parse
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
-RES=ROOT/'server/src/main/resources/spelling'
+RES=ROOT/'server/resources/spelling'
 selection=json.loads((ROOT/'scripts/vocabulary/selection.json').read_text())
 cache=ROOT/'.local/spelling-metadata';cache.mkdir(parents=True,exist_ok=True)
 records={}
