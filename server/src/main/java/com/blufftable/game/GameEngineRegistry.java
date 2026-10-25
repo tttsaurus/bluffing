@@ -19,5 +19,7 @@ public class GameEngineRegistry {
         if (engine == null) throw new IllegalStateException("No engine registered for " + type);
         return engine;
     }
+
+    public List<GameEngine> all() { return List.copyOf(engines.values()); }
 }
 

@@ -13,6 +13,7 @@ frontend/vite.config.d.ts
 # Gradle / Java build output and local caches
 build/
 .gradle/
+.gradle-local/
 .kotlin/
 
 # Local environment configuration (keep shareable examples)
@@ -24,6 +25,7 @@ build/
 !.env.template
 
 # Database backups and runtime logs
+.local/
 .backups/
 *.log
 npm-debug.log*

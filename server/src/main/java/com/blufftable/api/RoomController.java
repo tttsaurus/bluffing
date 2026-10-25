@@ -102,6 +102,24 @@ public class RoomController {
         return view;
     }
 
+    @PutMapping("/{roomId}/avatars/equip")
+    public RoomView equipAvatar(@PathVariable UUID roomId,
+                               @RequestHeader(value = "Authorization", required = false) String authorization,
+                               @Valid @RequestBody AvatarRequest request) {
+        RoomView view = rooms.avatar(roomId, playerId(authorization), request);
+        sockets.broadcast(roomId);
+        return view;
+    }
+
+    @PostMapping("/{roomId}/avatars/purchase")
+    public RoomView purchaseAvatar(@PathVariable UUID roomId,
+                                  @RequestHeader(value = "Authorization", required = false) String authorization,
+                                  @Valid @RequestBody AvatarRequest request) {
+        RoomView view = rooms.avatar(roomId, playerId(authorization), request, true);
+        sockets.broadcast(roomId);
+        return view;
+    }
+
     private UUID playerId(String authorization) {
         return identities.authenticateAuthorization(authorization).getId();
     }

@@ -5,6 +5,7 @@ export const suitSymbols = { SPADES: '♠', HEARTS: '♥', DIAMONDS: '♦', CLUB
 export const gameModes: Record<GameType, { name: string; cardsPerDeck: number }> = {
   LIARS_DECK: { name: "Liar's Deck", cardsPerDeck: 52 },
   LIARS_DECK_PLUS: { name: "Liar's Deck Plus", cardsPerDeck: 54 },
+  LIARS_DECK_4_FUN: { name: "Liar's Deck 4 Fun", cardsPerDeck: 52 },
 }
 
 export function straightClaimRanks(cards: Card[]) {

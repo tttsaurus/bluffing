@@ -1,9 +1,11 @@
-export type GameType = 'LIARS_DECK' | 'LIARS_DECK_PLUS'
+export type GameType = 'LIARS_DECK' | 'LIARS_DECK_PLUS' | 'LIARS_DECK_4_FUN'
 export type RoomStatus = 'LOBBY' | 'IN_GAME'
 export type Suit = 'SPADES' | 'HEARTS' | 'DIAMONDS' | 'CLUBS' | 'JOKER'
 
 export interface Player { id: string; displayName: string; identityTag: string; root: boolean }
 export interface Card { id: string; rank: string; suit: Suit }
+export type AvatarId = 'DEFAULT' | 'BOXING_CAT' | 'PORTRAIT' | 'GREEN_CHARACTER'
+
 export interface Member {
   id: string
   displayName: string
@@ -12,6 +14,7 @@ export interface Member {
   balance: number
   host: boolean
   presence: 'ACTIVE' | 'AWAY' | 'OFFLINE'
+  equippedAvatar?: AvatarId
   equippedSkin: SkinId
 }
 export interface Claim { playerId: string; cardCount: number; generation: number; risk: number }
@@ -26,7 +29,21 @@ export interface GameOutcome {
   declaredRank: string | null
   revealedCards: Card[]
 }
+export interface SpellingView {
+  id: string
+  stage: 'ACTIVE' | 'COMPLETE' | 'CANCELLED'
+  serverNow: number
+  deadline: number
+  penalty: number
+  audioUrl: string | null
+  submitted: boolean
+  submittedCount: number
+  playerCount: number
+  results: { playerId: string; word: string; answer: string; correct: boolean; drawn: number }[]
+}
 export interface GameView {
+  spelling?: SpellingView | null
+  lastNonFoldedPlayerId?: string | null
   gameId: string
   phase: 'ACTIVE' | 'FINISHED'
   deckCount: number
@@ -61,7 +78,9 @@ export interface RoomSummary {
   createdAt: string
   joined: boolean
 }
+export interface Avatar { id: AvatarId; name: string; price: number; owned: boolean }
 export interface RoomView {
+  avatars?: Avatar[]
   id: string
   name: string
   gameType: GameType

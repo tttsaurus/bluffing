@@ -1,14 +1,16 @@
 import { AnimatePresence, motion, MotionConfig } from 'motion/react'
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useEffect, useRef, useState } from 'react'
 import { useGameStore } from './store'
 import type { Card, GameType, Member, Player, RoomSummary } from './types'
 import { CardBack } from './CardBack'
+import { PlayerAvatar } from './PlayerAvatar'
+import { SpellingChallenge } from './SpellingChallenge'
 import { DeckShop } from './DeckShop'
 import { Modal } from './Modal'
 import { Leaderboards } from './Leaderboards'
 import { skinNames, tableSkins } from './presentation'
-import { PlayHistory, RoundFeedback, TurnOrder, Wallets } from './GameFeedback'
-import { TableActivity } from './TableActivity'
+import { PlayHistory, RoundFeedback, Wallets } from './GameFeedback'
+import { TableActivity, TableSeats } from './TableActivity'
 import { gameModes, ranks, suitSymbols } from './gameModes'
 import { PlusRules } from './PlusRules'
 
@@ -86,7 +88,7 @@ function Identity() {
 }
 
 function Lobby() {
-  const { player, rooms, connected, reconnect, loadRooms, createRoom, joinRoom, deleteRoom, openRoom, loading } = useGameStore()
+  const { player, rooms, connected, reconnect, loadRooms, createRoom, joinRoom, deleteRoom, openRoom, loading, debugMode, switchIdentity } = useGameStore()
   const [roomName, setRoomName] = useState(randomRoomName)
   const [gameType, setGameType] = useState<GameType>('LIARS_DECK')
   const [deleteTarget, setDeleteTarget] = useState<RoomSummary | null>(null)
@@ -95,9 +97,9 @@ function Lobby() {
 
   return (
     <motion.div className="lobby page" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-      <header><Brand /><button className="profile" onClick={() => setEditingProfile(true)}>
+      <header><Brand /><div className="lobby-identity-controls">{(player?.root || debugMode) && <button className="secondary debug-identity-switch" disabled={loading} onClick={() => void switchIdentity()}>{debugMode ? 'Switch to root' : 'Switch to debug bot'}</button>}<button className="profile" onClick={() => setEditingProfile(true)}>
         <span className="profile-name">{player && <IdentityName name={player.displayName} tag={player.identityTag} />}{player?.root && <b className="root-badge">ROOT</b>}</span>
-        <div className="avatar">{initials(player?.displayName)}</div></button></header>
+        <div className="avatar">{initials(player?.displayName)}</div></button></div></header>
       {!connected && <div className="lobby-reconnecting" role="status"><strong>Reconnecting to the live table…</strong><button onClick={reconnect}>Reconnect now <span aria-hidden="true">↻</span></button></div>}
       <section className="lobby-intro">
         <div><h1>Find your <em>next table.</em></h1></div>
@@ -223,7 +225,7 @@ function WaitingRoom() {
 }
 
 function PlayerRow({ member, index, self, canKick, onKick }: { member: Member; index: number; self: boolean; canKick: boolean; onKick: () => void }) {
-  return <div className="player-row"><div className="seat">0{index + 1}</div><div className="avatar small">{initials(member.displayName)}</div>
+  return <div className="player-row"><div className="seat">0{index + 1}</div><div className="avatar small"><PlayerAvatar avatar={member.equippedAvatar} /></div>
     <div className="player-identity"><strong><IdentityName name={member.displayName} tag={member.identityTag} />{self && ' · You'}</strong>
       <span>{member.host ? 'Table host' : 'Player'} <PresenceStatus status={member.presence} /></span><span className={`edition-chip edition-${member.equippedSkin?.toLowerCase() ?? 'classic'}`}>✦ {skinNames[member.equippedSkin ?? 'CLASSIC']}</span></div>
     <b className="coins">◆ {member.balance}</b>{canKick && <button className="kick-button" onClick={onKick}>KICK</button>}</div>
@@ -233,12 +235,18 @@ function GameTable() {
   const { room, player, command, connected } = useGameStore()
   const [selected, setSelected] = useState<string[]>([])
   const [rank, setRank] = useState('A')
-  const [maximized, setMaximized] = useState(false)
-  const [sideTab, setSideTab] = useState<'wallet' | null>(null)
   const game = room?.game
+  const handScroll = useRef<HTMLDivElement>(null)
+  const previousHand = useRef(new Set<string>())
+  useEffect(() => {
+    const ids = (game?.hand ?? []).map(card => card.id)
+    if (ids.some(id => !previousHand.current.has(id)) && handScroll.current) handScroll.current.scrollLeft = 0
+    previousHand.current = new Set(ids)
+  }, [game?.hand])
   useEffect(() => { setSelected([]) }, [game?.currentPlayerId, game?.poolSize])
   if (!room || !player || !game) return null
-  const myTurn = connected && game.currentPlayerId === player.id && game.phase === 'ACTIVE'
+  const spellingRunning = game.spelling?.stage === 'ACTIVE'
+  const myTurn = connected && !spellingRunning && game.currentPlayerId === player.id && game.phase === 'ACTIVE'
   const participating = game.hands.some(hand => hand.playerId === player.id)
   const skins = tableSkins(room)
   const risk = game.generation * selected.length * 10
@@ -248,64 +256,34 @@ function GameTable() {
   const play = () => { command('PLAY', selected, game.targetRank ? undefined : rank); setSelected([]) }
 
   return (
-    <motion.div className={`game page ${maximized ? 'is-maximized' : ''}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-      <TopBar />
+    <motion.div className="game page battle-page" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
       <RoundFeedback />
-      <TurnOrder room={room} playerId={player.id} connected={connected} />
-      <div className="game-layout">
-        <button className="game-view-toggle" type="button" aria-pressed={maximized} onClick={() => { setMaximized(value => !value); setSideTab(null) }}>
-          <span aria-hidden="true">{maximized ? '⊡' : '⛶'}</span>{maximized ? 'Minimize table' : 'Maximize table'}
-        </button>
-        {!maximized && <aside className="left-rail">
-          <div className="game-mode-label"><strong>{gameModes[room.gameType].name}</strong><span>{game.deckCount} {game.deckCount === 1 ? 'deck' : 'decks'} · {gameModes[room.gameType].cardsPerDeck * game.deckCount} cards</span></div>
-          {room.gameType === 'LIARS_DECK_PLUS' && <PlusRules cards={game.hand.filter(card => selected.includes(card.id))} rank={game.targetRank ?? rank} />}
-          <Wallets room={room} playerId={player.id} />
-          <motion.div className="risk-box" aria-label={`Potential reward: generation ${rewardGeneration} times ${rewardCards} cards, ${rewardValue} coins`} animate={{ scale: selected.length ? [1, 1.025, 1] : 1 }} transition={{ duration: .24 }}>
-            <div className="risk-formula" aria-label={`${rewardGeneration} times ${rewardCards}`}>
-              <div className="risk-factor generation" aria-label="Generation"><strong>{rewardGeneration}</strong></div>
-              <b className="risk-operator">×</b>
-              <div className="risk-factor cards-factor" aria-label="Cards"><strong>{rewardCards}</strong></div>
-            </div>
-            <div className="risk-payout"><span>× 10</span><strong>{rewardValue}</strong><b>◆</b></div>
-          </motion.div>
-        </aside>}
-
-        {maximized && <>
-          <div className="max-table-tabs" aria-label="Table side panels">
-            <button type="button" aria-expanded={sideTab === 'wallet'} onClick={() => setSideTab(sideTab === 'wallet' ? null : 'wallet')}>Wallet &amp; reward</button>
-          </div>
-          <AnimatePresence>
-            {sideTab && <motion.aside className="max-side-panel side-wallet" key={sideTab} aria-label="Wallet and reward"
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: .16 }}>
-              <button className="max-panel-close" type="button" aria-label="Close side panel" onClick={() => setSideTab(null)}>×</button>
-              <Wallets room={room} playerId={player.id} />
-              <motion.div className="risk-box" aria-label={`Potential reward: generation ${rewardGeneration} times ${rewardCards} cards, ${rewardValue} coins`}>
-                <div className="risk-formula" aria-label={`${rewardGeneration} times ${rewardCards}`}>
-                  <div className="risk-factor generation" aria-label="Generation"><strong>{rewardGeneration}</strong></div><b className="risk-operator">×</b>
-                  <div className="risk-factor cards-factor" aria-label="Cards"><strong>{rewardCards}</strong></div>
-                </div>
-                <div className="risk-payout"><span>× 10</span><strong>{rewardValue}</strong><b>◆</b></div>
-              </motion.div>
-            </motion.aside>}
-          </AnimatePresence>
-        </>}
-
+      <SpellingChallenge />
+      <div className="battle-top">
+        <div className="current-play-bar"><TableActivity room={room} myTurn={myTurn} /></div>
+        <details className="history-menu"><summary>Recent plays <span>{game.plays?.length ?? 0}</span></summary><PlayHistory room={room} /></details>
+      </div>
+      <TopBar />
+      <div className="game-layout battle-layout">
         <section className="felt-wrap">
-          <div className={`felt turn-skin-${skins.turn.toLowerCase()}`}>
-            <div className="turn-aura" key={`${game.currentPlayerId}-${skins.turn}`}><CardBack skin={skins.turn} surface /><div className="aura-rings" /></div>
-            <div className="felt-line" />
-            <AnimatePresence mode="wait">
-              <motion.div className="pool" key={`${game.poolSize}-${game.targetRank}`} initial={{ scale: .85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
-                {game.poolSize ? <><div className={`card-stack pool-skin-${skins.pool.toLowerCase()}`}>{Array.from({ length: Math.min(4, game.poolSize) }).map((_, i) => <i key={i} style={{ transform: `translate(${i * 3}px, ${-i * 3}px) rotate(${(i - 2) * 4}deg)` }} />)}<CardBack skin={skins.pool} compact /></div>
-                  <strong>{game.poolSize} {game.poolSize === 1 ? 'card' : 'cards'}</strong></>
-                  : <><div className="pool-preview"><CardBack skin={skins.turn} compact /></div><strong>Open the round</strong></>}
-              </motion.div>
-            </AnimatePresence>
-            <TableActivity room={room} myTurn={myTurn} />
+          <div className="table-arena">
+            <div className={`felt turn-skin-${skins.turn.toLowerCase()}`}>
+              <div className="turn-aura" key={`${game.currentPlayerId}-${skins.turn}`}><CardBack skin={skins.turn} surface /><div className="aura-rings" /></div>
+              <div className="felt-line" />
+              <AnimatePresence mode="wait">
+                <motion.div className="pool" key={`${game.poolSize}-${game.targetRank}`} initial={{ scale: .85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
+                  {game.poolSize ? <><div className={`card-stack pool-skin-${skins.pool.toLowerCase()}`}>{Array.from({ length: Math.min(4, game.poolSize) }).map((_, i) => <i key={i} style={{ transform: `translate(${i * 3}px, ${-i * 3}px) rotate(${(i - 2) * 4}deg)` }} />)}<CardBack skin={skins.pool} compact /></div>
+                    <strong>{game.poolSize} {game.poolSize === 1 ? 'card' : 'cards'}</strong></>
+                    : <><div className="pool-preview"><CardBack skin={skins.turn} compact /></div><strong>Open the round</strong></>}
+                </motion.div>
+              </AnimatePresence>
+            </div>
+            <TableSeats room={room} playerId={player.id} />
           </div>
           {!participating && <div className="my-seat">{player.root ? 'ROOT' : 'HOST'} · SPECTATING</div>}
           {participating && <section className="hand-area">
             {game.pendingClaim && game.hands.some(hand => hand.playerId === game.pendingClaim?.playerId && hand.cardCount === 0) && <p className="final-play-notice" role="status">Final hand pending: Truth Check to challenge, or play / fold to accept. Victory is not confirmed yet.</p>}
+            <div className="hand-caption"><span>YOUR HAND <b>{game.hand.length}</b></span><span>{myTurn ? 'Select cards to play' : 'Waiting for your turn'}</span></div>
             <div className="hand-controls">
               {!game.targetRank && myTurn && <label>DECLARE AS<select value={rank} onChange={e => setRank(e.target.value)}>{ranks.map(item => <option key={item}>{item}</option>)}</select></label>}
               <div className="action-buttons">
@@ -314,10 +292,23 @@ function GameTable() {
                 <button className="action play" disabled={!myTurn || selected.length === 0} onClick={play}><strong>PLAY {selected.length || ''}</strong></button>
               </div>
             </div>
-            <div className="cards" aria-label="Your hand"><div className="cards-track">{game.hand.map((card, index) => <PlayingCard key={card.id} card={card} index={index}
+            <div ref={handScroll} className="cards" aria-label="Your hand"><div className="cards-track">{game.hand.map((card, index) => <PlayingCard key={card.id} card={card} index={index}
               selected={selected.includes(card.id)} disabled={!myTurn} onClick={() => setSelected(items => items.includes(card.id) ? items.filter(id => id !== card.id) : [...items, card.id])} />)}</div></div>
           </section>}
-          <PlayHistory room={room} />
+          {room.gameType === 'LIARS_DECK_PLUS' && <div className="battle-rules"><PlusRules cards={game.hand.filter(card => selected.includes(card.id))} rank={game.targetRank ?? rank} /></div>}
+          {room.gameType === 'LIARS_DECK_4_FUN' && <p className="battle-rules-note">A lone SPELL card triggers a 15-second spelling challenge when checked. Missed words draw cards.</p>}
+          <aside className="battle-reward-board" aria-label="Reward and wallet">
+            <div className="reward-board-heading"><strong>{gameModes[room.gameType].name}</strong><span>{game.deckCount} {game.deckCount === 1 ? 'deck' : 'decks'}</span></div>
+            <Wallets room={room} playerId={player.id} />
+            <motion.div className="risk-box" aria-label={`Potential reward: generation ${rewardGeneration} times ${rewardCards} cards, ${rewardValue} coins`} animate={{ scale: selected.length ? [1, 1.025, 1] : 1 }} transition={{ duration: .24 }}>
+              <div className="risk-formula" aria-label={`${rewardGeneration} times ${rewardCards}`}>
+                <div className="risk-factor generation" aria-label="Generation"><strong>{rewardGeneration}</strong></div>
+                <b className="risk-operator">×</b>
+                <div className="risk-factor cards-factor" aria-label="Cards"><strong>{rewardCards}</strong></div>
+              </div>
+              <div className="risk-payout"><span>× 10</span><strong>{rewardValue}</strong><b>◆</b></div>
+            </motion.div>
+          </aside>
         </section>
       </div>
     </motion.div>
@@ -325,12 +316,13 @@ function GameTable() {
 }
 
 function PlayingCard({ card, selected, disabled, onClick, index }: { card: Card; selected: boolean; disabled: boolean; onClick: () => void; index: number }) {
+  const spell = card.rank === 'SPELL'
   const red = card.suit === 'HEARTS' || card.suit === 'DIAMONDS'
   const joker = card.rank === 'JOKER'
-  const suit = suitSymbols[card.suit]
-  return <motion.button layout aria-label={joker ? 'Joker (wild card)' : `${card.rank} of ${card.suit.toLowerCase()}`} aria-pressed={selected} className={`playing-card ${joker ? 'joker-card' : ''} ${red ? 'red' : ''} ${selected ? 'selected' : ''}`} disabled={disabled} onClick={onClick}
+  const suit = spell ? '✦' : suitSymbols[card.suit]
+  return <motion.button layout aria-label={spell ? 'Spell card' : joker ? 'Joker (wild card)' : `${card.rank} of ${card.suit.toLowerCase()}`} aria-pressed={selected} className={`playing-card ${spell ? 'spell-card' : ''} ${joker ? 'joker-card' : ''} ${red ? 'red' : ''} ${selected ? 'selected' : ''}`} disabled={disabled} onClick={onClick}
     initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: selected ? -22 : 0 }} transition={{ delay: Math.min(index * .025, .35) }}>
-    <span>{card.rank}<small>{suit}</small></span><b>{suit}</b><span className="bottom">{card.rank}<small>{suit}</small></span>
+    <span>{spell ? 'SPELL' : card.rank}<small>{suit}</small></span><b>{suit}</b>{spell && <em className="spell-card-label">15 SECOND<br />SPELLING TRAP</em>}<span className="bottom">{spell ? 'SPELL' : card.rank}<small>{suit}</small></span>
   </motion.button>
 }
 

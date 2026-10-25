@@ -4,7 +4,7 @@ Multiplayer Liar’s Deck with a React/TypeScript frontend and Java/Spring Boot 
 
 ## Requirements
 
-Java 21, Node.js 24.15+ (or 22.22.2+), npm, PostgreSQL 16, and Linux with Bash, `curl`, `setsid`, and `timeout`. Use the included Gradle wrapper; a system Gradle installation is not needed. Run the following commands from the project root.
+Java 21, Node.js 24.15+ (or 22.22.2+), npm, and PostgreSQL 16 are required. Use the included Gradle wrapper; a system Gradle installation is not needed. Linux is the primary development target. macOS and Windows are supported through the platform launchers below.
 
 ## Database
 
@@ -72,7 +72,7 @@ npm --prefix frontend run build
 
 ## Run
 
-With PostgreSQL running, install dependencies once and start both development servers:
+With PostgreSQL running, install dependencies once and start both development servers. On Linux, use:
 
 ```bash
 npm --prefix frontend ci --include=optional
@@ -80,6 +80,36 @@ bash scripts/start-dev.sh
 ```
 
 Open **http://localhost:5173**. The launcher waits for the backend on port **8080**, then starts Vite. Vite proxies `/api` and `/ws` to the backend. Ctrl+C stops both servers and leaves PostgreSQL running.
+
+For solo debugging, open two tabs on the same address. In one tab, use **Switch to debug bot** in the root account's lobby; the other stays root. The bot is a persistent, separate non-root player with its own room balances. Switching applies only to that tab and is available only in the lobby; **Switch to root** returns it to the original account. Root access is granted when opening the app locally on the server machine.
+
+### macOS
+
+Install Java 21, Node.js, PostgreSQL 16, and Bash with Homebrew. The macOS launcher uses a project-local PostgreSQL data directory on port 5433 and starts the same backend and frontend together:
+
+```bash
+npm --prefix frontend ci --include=optional
+bash scripts/start-local-macos.sh
+```
+
+It can also expose the app privately through Tailscale Serve:
+
+```bash
+bash scripts/start-local-macos.sh --tailnet
+```
+
+Stop the app with Ctrl+C or `bash scripts/stop-local.sh`. PostgreSQL data remains in `.local/postgres`; `bash scripts/stop-local-db.sh` stops that database without deleting it. The launcher expects Homebrew's `bash`, `python`, `openjdk@21`, `node@24`, `postgresql@16`, and `coreutils` packages.
+
+### Windows
+
+Install Java 21, Node.js, PostgreSQL 16, and Tailscale if you want tailnet access. Start PostgreSQL separately, install frontend dependencies, then run the PowerShell launcher from the project root:
+
+```powershell
+npm --prefix frontend ci --include=optional
+./scripts/start-dev.ps1
+```
+
+For Tailscale Serve, use `./scripts/start-dev.ps1 -Tailnet`. Ctrl+C stops both development servers. Set `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD` in PowerShell first if PostgreSQL is not using the local default connection. Logs are written under `.local/`.
 
 Optional overrides:
 

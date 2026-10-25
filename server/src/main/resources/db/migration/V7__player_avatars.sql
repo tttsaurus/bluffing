@@ -1,0 +1,1 @@
+ALTER TABLE room_memberships ADD COLUMN equipped_avatar VARCHAR(32) NOT NULL DEFAULT 'DEFAULT';

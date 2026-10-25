@@ -4,6 +4,7 @@ import com.blufftable.domain.RoomMembership;
 import com.blufftable.service.RewardService;
 import java.security.SecureRandom;
 import java.util.*;
+import java.util.function.LongSupplier;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Shared session lifecycle; each concrete game type owns its own room-state map. */
@@ -12,13 +13,22 @@ public abstract class AbstractLiarsDeckEngine implements GameEngine {
     private final Map<UUID, State> games = new ConcurrentHashMap<>();
     private final SecureRandom random = new SecureRandom();
     private final RewardService rewards;
+    private final SpellingWords spellingWords = new SpellingWords();
+    private final LongSupplier clock;
 
     protected AbstractLiarsDeckEngine(RewardService rewards) {
+        this(rewards, System::currentTimeMillis);
+    }
+
+    protected AbstractLiarsDeckEngine(RewardService rewards, LongSupplier clock) {
         this.rewards = rewards;
+        this.clock = clock;
     }
 
     protected int cardsPerDeck() { return 52; }
     protected boolean allowsRandomDecks() { return false; }
+    protected boolean spellingTrapsEnabled() { return false; }
+    protected long now() { return clock.getAsLong(); }
     protected boolean isTruthful(List<Card> cards, String rank) {
         return cards.stream().allMatch(card -> card.rank().equals(rank));
     }
@@ -56,10 +66,14 @@ public abstract class AbstractLiarsDeckEngine implements GameEngine {
         for (int round = 0; round < handSize; round++) {
             for (UUID playerId : order) hands.get(playerId).add(deck.get(cursor++));
         }
+        if (spellingTrapsEnabled()) {
+            hands.values().forEach(hand -> hand.add(new Card(UUID.randomUUID(), Card.SPELL, "SPADES")));
+        }
         hands.values().forEach(hand -> hand.sort(Comparator.comparingInt(c -> rankIndex(c.rank()))));
 
         int first = random.nextInt(order.size());
         State state = new State(UUID.randomUUID(), roomId, deckCount, handSize, order, hands, first);
+        state.reserve.addAll(deck.subList(cursor, deck.size()));
         state.event("New game · " + deckCount + (deckCount == 1 ? " deck" : " decks")
                 + " · " + handSize + " cards each");
         games.put(roomId, state);
@@ -70,6 +84,11 @@ public abstract class AbstractLiarsDeckEngine implements GameEngine {
         State state = games.get(command.roomId());
         if (state == null) throw new GameRuleException("No active game in this room");
         synchronized (state) {
+            if (command.action() == GameAction.SPELL_ANSWER || command.action() == GameAction.SPELL_DRAFT) {
+                spellingCommand(state, playerId, command);
+                return;
+            }
+            if (spellingRunning(state)) throw new GameRuleException("Finish the spelling challenge first");
             requireActiveTurn(state, playerId);
             switch (command.action()) {
                 case PLAY -> play(state, playerId, command.cardIds(), command.declaredRank());
@@ -108,6 +127,7 @@ public abstract class AbstractLiarsDeckEngine implements GameEngine {
         state.pendingClaim = new Claim(playerId, played, generation, risk);
         state.claims.add(state.pendingClaim);
         state.plays.add(new GameView.PlayView(++state.playSequence, playerId, state.targetRank, played.size(), "PENDING", null, List.of()));
+        state.lastNonFoldedPlayerId = playerId;
         if (state.plays.size() > 50) state.plays.removeFirst();
         state.pool.addAll(played);
         state.consecutiveFolds = 0;
@@ -145,6 +165,8 @@ public abstract class AbstractLiarsDeckEngine implements GameEngine {
         Claim challenged = state.claims.getLast();
         if (challenged.playerId.equals(challengerId)) throw new GameRuleException("You cannot challenge your own claim");
         boolean truthful = isTruthful(challenged.cards, state.targetRank);
+        boolean spellingTrap = spellingTrapsEnabled() && challenged.cards.size() == 1 && challenged.cards.getFirst().isSpell();
+        int spellingPenalty = state.pool.size();
         UUID recipient;
         UUID nextInitializer;
         if (truthful) {
@@ -168,7 +190,94 @@ public abstract class AbstractLiarsDeckEngine implements GameEngine {
         clearPool(state);
         state.currentIndex = state.order.indexOf(nextInitializer);
         state.initializerIndex = state.currentIndex;
-        if (truthful) finishIfEmpty(state, challenged.playerId);
+        if (spellingTrap) startSpelling(state, challenged.playerId, spellingPenalty);
+        else if (truthful) finishIfEmpty(state, challenged.playerId);
+        else state.lastNonFoldedPlayerId = challengerId;
+    }
+
+    private boolean spellingRunning(State state) {
+        return state.spelling != null && "ACTIVE".equals(state.spelling.stage);
+    }
+
+    private void startSpelling(State state, UUID defender, int penalty) {
+        SpellingRound round = new SpellingRound(UUID.randomUUID(), defender, penalty, now() + 15_000);
+        SpellingWords.Word word = spellingWords.pick(1, random, state.usedWords).getFirst();
+        state.order.forEach(id -> round.questions.put(id, word));
+        state.spelling = round;
+        state.event("SPELL trap · everyone spells a word · wrong or timeout draws " + penalty);
+    }
+
+    private void spellingCommand(State state, UUID playerId, GameCommand command) {
+        SpellingRound round = state.spelling;
+        if (!spellingTrapsEnabled() || !"ACTIVE".equals(state.phase) || !spellingRunning(state)
+                || !round.id.equals(command.spellingId()) || !round.questions.containsKey(playerId)) {
+            throw new GameRuleException("This spelling challenge is no longer available");
+        }
+        if (now() >= round.deadline) { advanceSpelling(state); return; }
+        if (round.answers.containsKey(playerId)) throw new GameRuleException("Only one answer per challenge");
+        if (command.answer() == null || command.answer().length() > 64) {
+            throw new GameRuleException("Enter a word of at most 64 characters");
+        }
+        String answer = command.answer().trim().toLowerCase(Locale.ROOT);
+        if (command.action() == GameAction.SPELL_DRAFT) {
+            round.drafts.put(playerId, answer);
+            return;
+        }
+        round.answers.put(playerId, answer);
+        advanceSpelling(state);
+    }
+
+    private void advanceSpelling(State state) {
+        if (!spellingRunning(state)) return;
+        SpellingRound round = state.spelling;
+        if (now() < round.deadline && !round.answers.keySet().containsAll(round.questions.keySet())) return;
+        for (var entry : round.questions.entrySet()) {
+            String answer = round.answers.getOrDefault(entry.getKey(), round.drafts.getOrDefault(entry.getKey(), ""));
+            boolean correct = entry.getValue().accepts(answer);
+            if (!correct) {
+                for (int i = 0; i < round.penalty; i++) {
+                    if (state.reserve.isEmpty()) {
+                        List<Card> refill = buildDeck(state.deckCount);
+                        shuffleDeck(refill);
+                        state.reserve.addAll(refill);
+                    }
+                    state.hands.get(entry.getKey()).add(state.reserve.removeFirst());
+                }
+                state.hands.get(entry.getKey()).sort(Comparator.comparingInt(card -> rankIndex(card.rank())));
+            }
+            round.results.add(new GameView.SpellingResult(entry.getKey(), entry.getValue().text(), answer,
+                    correct, correct ? 0 : round.penalty));
+        }
+        round.stage = "COMPLETE";
+        state.event("Spelling complete · challenge resolved");
+        if (state.hands.containsKey(round.defender)) finishIfEmpty(state, round.defender);
+    }
+
+    private GameView.SpellingView spellingView(State state, UUID viewerId) {
+        SpellingRound round = state.spelling;
+        if (round == null) return null;
+        SpellingWords.Word word = round.questions.get(viewerId);
+        return new GameView.SpellingView(round.id, round.stage, now(), round.deadline, round.penalty,
+                word == null ? null : "/api/spelling/audio/" + word.id(), round.answers.containsKey(viewerId),
+                List.copyOf(round.results), round.answers.size(), round.questions.size());
+    }
+
+    @Override public List<UUID> dueRooms() {
+        return games.entrySet().stream().filter(entry -> {
+            synchronized (entry.getValue()) {
+                return spellingRunning(entry.getValue()) && now() >= entry.getValue().spelling.deadline;
+            }
+        }).map(Map.Entry::getKey).toList();
+    }
+
+    @Override public boolean tick(UUID roomId) {
+        State state = games.get(roomId);
+        if (state == null) return false;
+        synchronized (state) {
+            if (!spellingRunning(state) || now() < state.spelling.deadline) return false;
+            advanceSpelling(state);
+            return true;
+        }
     }
 
     private boolean finishIfEmpty(State state, UUID playerId) {
@@ -232,7 +341,8 @@ public abstract class AbstractLiarsDeckEngine implements GameEngine {
                             state.pendingClaim.cards.size(), state.pendingClaim.generation, state.pendingClaim.risk),
                     state.participants.stream().map(id -> new GameView.Earnings(id, state.earnings.getOrDefault(id, 0L))).toList(),
                     state.outcomes.stream().map(outcome -> outcome.forViewer(viewerId)).toList(),
-                    state.plays.stream().map(play -> play.forViewer(viewerId)).toList()));
+                    state.plays.stream().map(play -> play.forViewer(viewerId)).toList(),
+                    spellingView(state, viewerId), state.lastNonFoldedPlayerId));
         }
     }
 
@@ -248,6 +358,13 @@ public abstract class AbstractLiarsDeckEngine implements GameEngine {
             if (nextPlayer.equals(playerId)) nextPlayer = state.order.get(next(state, state.currentIndex));
             state.order.remove(playerId);
             state.hands.remove(playerId);
+            if (spellingRunning(state)) {
+                state.spelling.questions.remove(playerId);
+                state.spelling.answers.remove(playerId);
+                state.spelling.drafts.remove(playerId);
+                if (state.order.size() <= 1) state.spelling.stage = "CANCELLED";
+                else advanceSpelling(state);
+            }
             // A departed player cannot receive or defend an unresolved claim. Discard, never pay it.
             if (state.pendingClaim != null) {
                 resolvePlay(state, "VOIDED", null, List.of());
@@ -300,6 +417,21 @@ public abstract class AbstractLiarsDeckEngine implements GameEngine {
 
     private record Claim(UUID playerId, List<Card> cards, int generation, long risk) {}
 
+    private static final class SpellingRound {
+        final UUID id;
+        final UUID defender;
+        final int penalty;
+        final Map<UUID, SpellingWords.Word> questions = new LinkedHashMap<>();
+        final Map<UUID, String> answers = new HashMap<>();
+        final Map<UUID, String> drafts = new HashMap<>();
+        final List<GameView.SpellingResult> results = new ArrayList<>();
+        final long deadline;
+        String stage = "ACTIVE";
+        SpellingRound(UUID id, UUID defender, int penalty, long deadline) {
+            this.id = id; this.defender = defender; this.penalty = penalty; this.deadline = deadline;
+        }
+    }
+
     private static final class State {
         final UUID gameId;
         final UUID roomId;
@@ -309,6 +441,8 @@ public abstract class AbstractLiarsDeckEngine implements GameEngine {
         final List<UUID> participants;
         final Map<UUID, List<Card>> hands;
         final List<Card> pool = new ArrayList<>();
+        final Deque<Card> reserve = new ArrayDeque<>();
+        final Set<String> usedWords = new HashSet<>();
         final List<Claim> claims = new ArrayList<>();
         final Deque<String> events = new ArrayDeque<>();
         final Map<UUID, Long> earnings = new HashMap<>();
@@ -323,6 +457,8 @@ public abstract class AbstractLiarsDeckEngine implements GameEngine {
         String targetRank;
         String phase = "ACTIVE";
         UUID winnerId;
+        UUID lastNonFoldedPlayerId;
+        SpellingRound spelling;
 
         State(UUID gameId, UUID roomId, int deckCount, int cardsPerPlayer, List<UUID> order,
               Map<UUID, List<Card>> hands, int first) {

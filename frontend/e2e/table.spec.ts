@@ -39,7 +39,7 @@ test('persistent identity supports duplicate names and nickname edits', async ({
   expect((await identity(page)).token).toBe(first.token)
 })
 
-for (const gameType of ['LIARS_DECK', 'LIARS_DECK_PLUS'] as const) {
+for (const gameType of ['LIARS_DECK', 'LIARS_DECK_PLUS', 'LIARS_DECK_4_FUN'] as const) {
 test(`two browsers create, join, play, truth-check privately and stop ${gameType}`, async ({ page, browser }) => {
   const host = await enter(page, 'CI dealer')
   const roomName = `CI ${gameType === 'LIARS_DECK_PLUS' ? 'Plus' : 'Classic'} ${Date.now()}`
@@ -53,6 +53,12 @@ test(`two browsers create, join, play, truth-check privately and stop ${gameType
     const listing = await page.request.get('/api/rooms', { headers: { Authorization: `Bearer ${host.token}` } })
     roomId = (await listing.json()).find((entry: { name: string }) => entry.name === roomName).id
     await expect(page.getByText('THIS GAME', { exact: true })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Avatars', exact: true }).click()
+    await page.getByRole('button', { name: 'Equip for free', exact: true }).click()
+    await expect(page.locator('.player-row .avatar img')).toHaveCount(1)
+    const waitingAvatar = await page.locator('.player-row .avatar img').boundingBox()
+    expect(waitingAvatar!.width).toBeLessThanOrEqual(50)
+    expect(waitingAvatar!.height).toBeLessThanOrEqual(50)
 
     // Durable seats must not block a deal while those accounts are offline.
     for (const displayName of ['CI absent one', 'CI absent two']) {
@@ -86,8 +92,14 @@ test(`two browsers create, join, play, truth-check privately and stop ${gameType
       await page.getByLabel('CARDS PER PLAYER').fill('3')
     }
     await page.getByRole('button', { name: 'Deal the cards' }).click()
-    await expect(page.getByRole('region', { name: 'Round order' })).toBeVisible()
-    await expect(guestPage.getByRole('region', { name: 'Round order' })).toBeVisible()
+    await expect(page.getByRole('list', { name: 'Players around the table' })).toBeVisible()
+    await expect(guestPage.getByRole('list', { name: 'Players around the table' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Stop deal' })).toBeVisible()
+    await expect(page.locator('.table-seat.current')).toContainText('THINKING…')
+    const wallet = await page.getByRole('complementary', { name: 'Reward and wallet' }).boundingBox()
+    const hand = await page.getByLabel('Your hand', { exact: true }).boundingBox()
+    expect(wallet!.y).toBeGreaterThanOrEqual(hand!.y + hand!.height)
+    await page.screenshot({ path: test.info().outputPath('avatar-table.png'), fullPage: true })
 
     const snapshot = async (token: string): Promise<RoomView> => {
       const response = await page.request.get(`/api/rooms/${roomId}/snapshot`, { headers: { Authorization: `Bearer ${token}` } })
@@ -115,9 +127,9 @@ test(`two browsers create, join, play, truth-check privately and stop ${gameType
     const [actor, checker, actorToken, checkerToken] = initial.game!.currentPlayerId === host.player.id
       ? [page, guestPage, host.token, guest.token] : [guestPage, page, guest.token, host.token]
     const before = await snapshot(actorToken)
-    const card = before.game!.hand[0]
+    const card = gameType === 'LIARS_DECK_4_FUN' ? before.game!.hand.find(card => card.rank === 'SPELL')! : before.game!.hand[0]
     // Multiple physical decks intentionally contain identical rank/suit labels.
-    await actor.getByRole('button', { name: `${card.rank} of ${card.suit.toLowerCase()}`, exact: true }).first().click()
+    await actor.getByRole('button', { name: card.rank === 'SPELL' ? 'Spell card' : `${card.rank} of ${card.suit.toLowerCase()}`, exact: true }).first().click()
     await actor.getByRole('button', { name: /^PLAY / }).click()
     await expect(checker.getByRole('button', { name: /^TRUTH CHECK/ })).toBeEnabled()
     await checker.getByRole('button', { name: /^TRUTH CHECK/ }).click()
@@ -126,7 +138,22 @@ test(`two browsers create, join, play, truth-check privately and stop ${gameType
     const defended = await snapshot(actorToken)
     expect(checked.game!.plays!.at(-1)!.revealedCards).toHaveLength(1)
     expect(defended.game!.plays!.at(-1)!.revealedCards).toHaveLength(0)
+    if (gameType === 'LIARS_DECK_4_FUN') {
+      for (const viewer of [actor, checker]) {
+        await expect(viewer.getByRole('dialog', { name: 'Spelling challenge' })).toBeVisible()
+        await viewer.getByLabel('YOUR SPELLING', { exact: true }).fill('intentionallywrong')
+      }
+      await actor.getByRole('button', { name: 'Submit', exact: true }).click()
+      // The other player's latest draft must settle automatically at the server deadline.
+      for (const viewer of [actor, checker]) {
+        await expect(viewer.getByRole('heading', { name: 'The verdict is in.' })).toBeVisible({ timeout: 20_000 })
+        await viewer.getByRole('button', { name: 'Back to the table', exact: true }).click()
+      }
+      expect((await snapshot(host.token)).game!.spelling!.stage).toBe('COMPLETE')
+    }
+    await checker.locator('.history-menu > summary').click()
     await expect(checker.getByRole('region', { name: 'Recent plays' }).getByText(`${card.rank}${suitSymbols[card.suit]}`)).toBeVisible()
+    await checker.locator('.history-menu > summary').click()
 
     // Dismiss the result overlay before opening the moderator dialog.
     for (const viewer of [page, guestPage]) {

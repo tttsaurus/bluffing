@@ -13,4 +13,6 @@ public interface GameEngine {
     Optional<GameView> view(UUID roomId, UUID viewerId);
     void depart(UUID roomId, UUID playerId);
     void remove(UUID roomId);
+    default List<UUID> dueRooms() { return List.of(); }
+    default boolean tick(UUID roomId) { return false; }
 }

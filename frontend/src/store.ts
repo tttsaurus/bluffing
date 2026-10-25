@@ -1,7 +1,7 @@
 import { create } from 'zustand'
-import type { GameType, Player, RoomSummary, RoomView, SkinId } from './types'
+import type { AvatarId, GameType, Player, RoomSummary, RoomView, SkinId } from './types'
 
-type GameAction = 'PLAY' | 'FOLD' | 'CHALLENGE'
+type GameAction = 'PLAY' | 'FOLD' | 'CHALLENGE' | 'SPELL_ANSWER' | 'SPELL_DRAFT'
 
 interface Store {
   player: Player | null
@@ -12,6 +12,8 @@ interface Store {
   connected: boolean
   error: string | null
   socket: WebSocket | null
+  debugMode: boolean
+  switchIdentity: () => Promise<void>
   reconnect: () => void
   identify: (displayName: string) => Promise<void>
   renamePlayer: (displayName: string) => Promise<void>
@@ -23,17 +25,23 @@ interface Store {
   openRoom: (roomId: string) => Promise<void>
   leaveRoom: () => void
   startGame: (deckCount: number, cardsPerPlayer: number | null, randomDeckCount?: boolean) => Promise<void>
+  changeAvatar: (avatarId: AvatarId, purchase?: boolean) => Promise<void>
   changeSkin: (skinId: SkinId, purchase: boolean) => Promise<void>
   stopGame: (gameId: string | null) => Promise<boolean>
-  command: (action: GameAction, cardIds?: string[], declaredRank?: string) => void
+  command: (action: GameAction, cardIds?: string[], declaredRank?: string, spellingId?: string, answer?: string) => void
   clearError: () => void
 }
 
 const PLAYER_KEY = 'bluff-table-player'
 const DEVICE_TOKEN_KEY = 'bluff-table-device-token'
+const DEBUG_KEY = 'bluff-table-debug-identity'
 const saved = localStorage.getItem(PLAYER_KEY)
-const initialPlayer = saved ? safePlayer(saved) : null
-const deviceToken = getOrCreateDeviceToken()
+const rootPlayer = saved ? safePlayer(saved) : null
+const rootToken = getOrCreateDeviceToken()
+const debugIdentity = readDebugIdentity()
+const initialPlayer = debugIdentity?.player ?? rootPlayer
+let deviceToken = debugIdentity?.token ?? rootToken
+let identityEpoch = 0
 let navigation = 0
 let reconnectTimer: number | undefined
 let connectionTimer: number | undefined
@@ -79,6 +87,8 @@ function identityEndpoint() {
 }
 
 function restoreIdentity(displayName: string, legacyPlayerId?: string) {
+  // Never submit a debug credential to the implicit-root registration endpoint.
+  if (deviceToken !== rootToken) return api<Player>('/api/players/me')
   return api<Player>(identityEndpoint(), {
     method: 'POST',
     body: JSON.stringify({ legacyPlayerId, displayName, deviceToken }),
@@ -95,38 +105,71 @@ export const useGameStore = create<Store>((set, get) => ({
   connected: false,
   error: null,
   socket: null,
+  debugMode: Boolean(debugIdentity),
+  switchIdentity: async () => {
+    if (get().room || get().loading || get().bootstrapping || (!get().debugMode && !get().player?.root)) return
+    set({ loading: true, error: null })
+    try {
+      const returning = get().debugMode
+      const result = returning
+        ? { player: await api<Player>('/api/players/me', { headers: { Authorization: `Bearer ${rootToken}` } }), deviceToken: rootToken }
+        : await api<{ player: Player; deviceToken: string }>('/api/players/me/debug-identity', { method: 'POST' })
+      // Persist before retiring the current identity: a storage failure must
+      // leave its credentials and socket intact, not half-switch the tab.
+      if (returning) {
+        localStorage.setItem(PLAYER_KEY, JSON.stringify(result.player))
+        sessionStorage.removeItem(DEBUG_KEY)
+      } else sessionStorage.setItem(DEBUG_KEY, JSON.stringify({ rootId: get().player!.id, token: result.deviceToken, player: result.player }))
+      ++identityEpoch
+      ++navigation
+      window.clearTimeout(reconnectTimer)
+      window.clearTimeout(connectionTimer)
+      if (get().socket) retireSocket(get().socket!)
+      deviceToken = result.deviceToken
+      set({ player: result.player, debugMode: !returning, socket: null, connected: false, rooms: [], loading: false })
+      connect(set, get)
+      await get().loadRooms()
+    } catch (error) { set({ error: message(error), loading: false }) }
+  },
   reconnect: () => { if (get().player && !get().bootstrapping && !get().connected) connect(set, get) },
 
   identify: async (displayName) => {
     set({ loading: true, error: null })
     try {
       const player = await restoreIdentity(displayName, get().player?.id)
-      localStorage.setItem(PLAYER_KEY, JSON.stringify(player))
+      savePlayer(player)
       set({ player, loading: false, bootstrapping: false })
       connect(set, get)
       await get().loadRooms()
-    } catch (error) { set({ player: null, error: message(error), loading: false, bootstrapping: false }) }
+    } catch (error) {
+      // A cleared development database must not strand this tab on a stale bot credential.
+      if (get().debugMode) { deviceToken = rootToken; sessionStorage.removeItem(DEBUG_KEY) }
+      set({ player: null, debugMode: false, error: message(error), loading: false, bootstrapping: false })
+    }
   },
 
   renamePlayer: async (displayName) => {
     if (!get().player) return
+    const epoch = identityEpoch
     set({ loading: true, error: null })
     try {
       const player = await api<Player>('/api/players/me', {
         method: 'PATCH', body: JSON.stringify({ displayName }),
       })
-      localStorage.setItem(PLAYER_KEY, JSON.stringify(player))
+      if (epoch !== identityEpoch) return
+      savePlayer(player)
       set({ player, loading: false })
     } catch (error) { set({ error: message(error), loading: false }) }
   },
 
   loadRooms: async () => {
+    const epoch = identityEpoch
     const player = get().player
     if (!player) return
     try {
       const rooms = await api<RoomSummary[]>('/api/rooms')
-      set({ rooms })
-    } catch (error) { set({ error: message(error) }) }
+      if (epoch === identityEpoch) set({ rooms })
+    } catch (error) { if (epoch === identityEpoch) set({ error: message(error) }) }
   },
 
   createRoom: async (name, gameType = 'LIARS_DECK') => {
@@ -232,13 +275,25 @@ export const useGameStore = create<Store>((set, get) => ({
     } catch (error) { set({ error: message(error), loading: false }) }
   },
 
-  command: (action, cardIds = [], declaredRank) => {
+  changeAvatar: async (avatarId, purchase = false) => {
+    const room = get().room
+    if (!room) return
+    set({ loading: true, error: null })
+    try {
+      await api<RoomView>(`/api/rooms/${room.id}/avatars/${purchase ? 'purchase' : 'equip'}`, {
+        method: purchase ? 'POST' : 'PUT', body: JSON.stringify({ avatarId }),
+      })
+      set({ loading: false })
+    } catch (error) { set({ error: message(error), loading: false }) }
+  },
+
+  command: (action, cardIds = [], declaredRank, spellingId, answer) => {
     const { socket, room, connected } = get()
     if (!connected || !room || !socket || socket.readyState !== WebSocket.OPEN) {
       set({ error: 'Live connection is not ready yet' })
       return
     }
-    socket.send(JSON.stringify({ type: 'GAME_COMMAND', payload: { roomId: room.id, action, cardIds, declaredRank } }))
+    socket.send(JSON.stringify({ type: 'GAME_COMMAND', payload: { roomId: room.id, action, cardIds, declaredRank, spellingId, answer } }))
   },
 
   clearError: () => set({ error: null }),
@@ -275,7 +330,7 @@ function connect(set: (partial: Partial<Store>) => void, get: () => Store) {
       const profile = get().player!
       void restoreIdentity(profile.displayName, profile.id).then(player => {
         if (get().socket !== socket) return
-        localStorage.setItem(PLAYER_KEY, JSON.stringify(player))
+        savePlayer(player)
         set({ player })
       }).catch(error => {
         if (get().socket === socket) set({ error: message(error) })
@@ -356,6 +411,19 @@ function safePlayer(value: string): Player | null {
     const player = JSON.parse(value) as Player
     return player?.id && player?.displayName ? player : null
   } catch { return null }
+}
+
+function readDebugIdentity(): { rootId: string; token: string; player: Player } | null {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(DEBUG_KEY) ?? 'null')
+    return value?.rootId === rootPlayer?.id && rootPlayer?.root && typeof value.token === 'string'
+      && value.token.length >= 32 && value.player?.id && !value.player.root ? value : null
+  } catch { return null }
+}
+
+function savePlayer(player: Player) {
+  if (deviceToken === rootToken) localStorage.setItem(PLAYER_KEY, JSON.stringify(player))
+  else sessionStorage.setItem(DEBUG_KEY, JSON.stringify({ rootId: safePlayer(localStorage.getItem(PLAYER_KEY) ?? '')?.id, token: deviceToken, player }))
 }
 
 function getOrCreateDeviceToken() {

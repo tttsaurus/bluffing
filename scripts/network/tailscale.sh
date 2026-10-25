@@ -25,9 +25,13 @@ fi
 if [[ "$tailscale_state" != Running ]]; then
   echo "Tailscale is not connected." >&2
   echo "Current state: $tailscale_state" >&2
-  echo "Start the daemon and sign in first:" >&2
-  echo "  sudo systemctl enable --now tailscaled" >&2
-  echo "  sudo tailscale up" >&2
+  if [[ "$(uname -s)" == Darwin ]]; then
+    echo "Open Tailscale.app, sign in if needed, and turn on its connection. Then retry." >&2
+  else
+    echo "Start the daemon and sign in first:" >&2
+    echo "  sudo systemctl enable --now tailscaled" >&2
+    echo "  sudo tailscale up" >&2
+  fi
   exit 1
 fi
 

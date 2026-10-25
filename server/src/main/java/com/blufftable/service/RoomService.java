@@ -129,6 +129,18 @@ public class RoomService {
     }
 
     @Transactional
+    public boolean advanceTimedGame(UUID roomId) {
+        // Each room settles in its own transaction. A deleted room or a failure in
+        // another table must not roll back rewards from an already settled timer.
+        Room room = rooms.findWithLockById(roomId).orElse(null);
+        if (room == null || room.getStatus() != RoomStatus.IN_GAME) return false;
+        GameEngine engine = engines.require(room.getGameType());
+        if (!engine.tick(roomId)) return false;
+        updateFinishedStatus(room, room.getHost().getId());
+        return true;
+    }
+
+    @Transactional
     public void command(UUID playerId, GameCommand command) {
         Room room = lockRoom(command.roomId());
         if (!presence.isInRoom(playerId, room.getId())) throw conflict("Enter the room before playing");
@@ -201,6 +213,29 @@ public class RoomService {
         return viewInternal(room, playerId);
     }
 
+    @Transactional
+    public RoomView avatar(UUID roomId, UUID playerId, AvatarRequest request) {
+        return avatar(roomId, playerId, request, false);
+    }
+
+    @Transactional
+    public RoomView avatar(UUID roomId, UUID playerId, AvatarRequest request, boolean purchase) {
+        Room room = lockRoom(roomId);
+        RoomMembership member = memberships.findWithLockByRoomIdAndPlayerId(roomId, playerId)
+            .filter(RoomMembership::isActive).orElseThrow(() -> conflict("Join this room to equip an avatar"));
+        Avatar avatar = request.avatarId();
+        boolean owned = avatar.price == 0 || member.getUnlockedAvatars().contains(avatar.name());
+        if (!owned) {
+            if (!purchase) throw conflict("Unlock this avatar first");
+            if (room.getStatus() == RoomStatus.IN_GAME) throw conflict("Unlock new avatars between deals");
+            if (member.getBalance() < avatar.price) throw conflict("Not enough room coins");
+            member.debit(avatar.price);
+            member.getUnlockedAvatars().add(avatar.name());
+        }
+        member.equipAvatar(avatar);
+        return viewInternal(room, playerId);
+    }
+
     private void requireAccess(Room room, UUID playerId) {
         Player viewer = players.findById(playerId).orElseThrow(() -> notFound("Player not found"));
         // Moderators may inspect/recover a deal after leaving, but never regain a removed hand.
@@ -254,7 +289,7 @@ public class RoomService {
         List<MemberView> memberViews = memberships.findByRoomIdAndActiveTrueOrderBySeatIndex(room.getId()).stream()
                 .map(member -> new MemberView(member.getPlayer().getId(), member.getPlayer().getDisplayName(),
                         member.getPlayer().identityTag(), member.getSeatIndex(), member.getBalance(),
-                        member.getPlayer().getId().equals(room.getHost().getId()), presenceOf(member, room), member.getEquippedSkin()))
+                        member.getPlayer().getId().equals(room.getHost().getId()), presenceOf(member, room), member.getEquippedSkin(), member.getEquippedAvatar()))
                 .toList();
         GameView game = engines.require(room.getGameType()).view(room.getId(), viewerId).orElse(null);
         var owned = memberships.findByRoomIdAndPlayerId(room.getId(), viewerId)
@@ -267,7 +302,10 @@ public class RoomService {
                 room.getHost().getId(), memberViews, game,
                 java.util.Arrays.stream(CardSkin.values()).map(skin -> new SkinView(skin.name(), skin.label,
                     skin.effect, skin.price, skin == CardSkin.CLASSIC || owned.contains(skin.name()))).toList(),
-                records, room.getLastNotice());
+                records, room.getLastNotice(),
+                java.util.Arrays.stream(Avatar.values()).map(avatar -> new AvatarView(avatar.name(), avatar.label,
+                    avatar.price, avatar.price == 0 || memberships.findByRoomIdAndPlayerId(room.getId(), viewerId)
+                        .map(member -> member.getUnlockedAvatars().contains(avatar.name())).orElse(false))).toList());
     }
 
     private Room lockRoom(UUID id) {

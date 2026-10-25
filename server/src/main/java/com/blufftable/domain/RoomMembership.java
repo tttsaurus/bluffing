@@ -19,10 +19,16 @@ public class RoomMembership {
     @Column(nullable = false) private boolean active;
     @Column(name = "joined_at", nullable = false) private Instant joinedAt;
     @Column(name = "equipped_skin", nullable = false, length = 32) private String equippedSkin = "CLASSIC";
+    @Column(name = "equipped_avatar", nullable = false, length = 32) private String equippedAvatar = "DEFAULT";
     @ElementCollection
     @CollectionTable(name = "member_skins", joinColumns = @JoinColumn(name = "membership_id"))
     @Column(name = "skin_id", length = 32)
     private java.util.Set<String> unlockedSkins = new java.util.HashSet<>();
+    @ElementCollection
+    @CollectionTable(name = "member_avatars", joinColumns = @JoinColumn(name = "membership_id"))
+    @Column(name = "avatar_id", length = 32)
+    private java.util.Set<String> unlockedAvatars = new java.util.HashSet<>();
+    public java.util.Set<String> getUnlockedAvatars() { return unlockedAvatars; }
     @Column(nullable = false) private long wins;
     @Column(name = "current_streak", nullable = false) private long currentStreak;
     @Column(name = "best_streak", nullable = false) private long bestStreak;
@@ -46,6 +52,8 @@ public class RoomMembership {
     public int getSeatIndex() { return seatIndex; }
     public long getBalance() { return balance; }
     public boolean isActive() { return active; }
+    public String getEquippedAvatar() { return equippedAvatar; }
+    public void equipAvatar(Avatar avatar) { equippedAvatar = avatar.name(); }
     public String getEquippedSkin() { return equippedSkin; }
     public java.util.Set<String> getUnlockedSkins() { return unlockedSkins; }
     public void equipSkin(String skin) { equippedSkin = skin; }

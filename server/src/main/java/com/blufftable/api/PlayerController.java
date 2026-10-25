@@ -2,6 +2,7 @@ package com.blufftable.api;
 
 import com.blufftable.api.ApiModels.PlayerRequest;
 import com.blufftable.api.ApiModels.PlayerView;
+import com.blufftable.api.ApiModels.DebugIdentityView;
 import com.blufftable.api.ApiModels.RenamePlayerRequest;
 import com.blufftable.domain.Player;
 import com.blufftable.service.DeviceIdentityService;
@@ -45,5 +46,16 @@ public class PlayerController {
         PlayerView view = service.rename(player, request);
         sockets.broadcastPlayerRooms(player.getId());
         return view;
+    }
+
+    @PostMapping("/me/debug-identity")
+    public DebugIdentityView debugIdentity(@RequestHeader(value = "Authorization", required = false) String authorization) {
+        return service.debugIdentity(identities.authenticateAuthorization(authorization));
+    }
+
+    @GetMapping("/me")
+    public PlayerView current(@RequestHeader(value = "Authorization", required = false) String authorization) {
+        Player player = identities.authenticateAuthorization(authorization);
+        return new PlayerView(player.getId(), player.getDisplayName(), player.identityTag(), player.isRootAccount());
     }
 }

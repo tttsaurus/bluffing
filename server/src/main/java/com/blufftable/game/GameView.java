@@ -23,8 +23,14 @@ public record GameView(
         ClaimView pendingClaim,
         List<Earnings> earnings,
         List<Outcome> outcomes,
-        List<PlayView> plays
+        List<PlayView> plays,
+        SpellingView spelling,
+        UUID lastNonFoldedPlayerId
 ) {
+    public record SpellingView(UUID id, String stage, long serverNow, long deadline, int penalty,
+                               String audioUrl, boolean submitted, List<SpellingResult> results,
+                               int submittedCount, int playerCount) {}
+    public record SpellingResult(UUID playerId, String word, String answer, boolean correct, int drawn) {}
     public record PlayView(long id, UUID playerId, String declaredRank, int cardCount,
                            String status, UUID challengerId, List<Card> revealedCards) {
         public PlayView forViewer(UUID viewerId) {

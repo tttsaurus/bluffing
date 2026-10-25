@@ -53,6 +53,34 @@ class RoomLifecycleTest {
             .hasMessageContaining("already running");
     }
 
+    @Test void timerIgnoresRoomsDeletedAfterTheSchedulerSnapshot() {
+        assertThat(service.advanceTimedGame(UUID.randomUUID())).isFalse();
+    }
+
+    @Test void avatarPurchasesArePersonalPersistentAndBlockedDuringDeals() {
+        rewards.credit(room, host, 1000);
+        service.avatar(room, host, new AvatarRequest(Avatar.PORTRAIT), true);
+        service.avatar(room, host, new AvatarRequest(Avatar.PORTRAIT), true);
+        var owned = service.view(room, host);
+        assertThat(owned.players()).filteredOn(member -> member.id().equals(host))
+            .allMatch(member -> member.balance() == 500 && member.equippedAvatar().equals("PORTRAIT"));
+        assertThat(service.view(room, guest).avatars()).filteredOn(avatar -> avatar.id().equals("PORTRAIT"))
+            .allMatch(avatar -> !avatar.owned());
+        assertThatThrownBy(() -> service.avatar(room, guest, new AvatarRequest(Avatar.PORTRAIT)))
+            .hasMessageContaining("Unlock this avatar first");
+        service.enter(room, guest, guestSession);
+        service.start(room, host, new StartGameRequest(1, 3));
+        rewards.credit(room, guest, 1000);
+        assertThatThrownBy(() -> service.avatar(room, guest, new AvatarRequest(Avatar.PORTRAIT), true))
+            .hasMessageContaining("between deals");
+        service.avatar(room, host, new AvatarRequest(Avatar.BOXING_CAT));
+        service.avatar(room, host, new AvatarRequest(Avatar.PORTRAIT));
+        service.kick(room, host, guest);
+        service.join(room, guest);
+        assertThat(service.view(room, host).players()).filteredOn(member -> member.id().equals(host))
+            .allMatch(member -> member.balance() == 500 && member.equippedAvatar().equals("PORTRAIT"));
+    }
+
     @ParameterizedTest @EnumSource(GameType.class)
     void awayAndOfflineSeatsSitOutWithoutLosingBalancesOrWinStreaks(GameType type) {
         UUID table = type == GameType.LIARS_DECK ? room
@@ -102,7 +130,8 @@ class RoomLifecycleTest {
 
         // Custom hand capacity, too, is calculated against the two present players, not four seats.
         var next = service.start(table, host, new StartGameRequest(1, 20));
-        assertThat(next.game().hands()).allMatch(count -> count.cardCount() == 20);
+        int expectedHandSize = 20 + (type == GameType.LIARS_DECK_4_FUN ? 1 : 0);
+        assertThat(next.game().hands()).allMatch(count -> count.cardCount() == expectedHandSize);
         long before = memberships.findByRoomIdAndPlayerId(table, host).orElseThrow().getBalance();
         rewards.credit(table, host, 100);
         service.stop(table, host, new StopGameRequest(next.game().gameId()));

@@ -12,10 +12,12 @@ const code = stripTypeScriptTypes(source)
   .replace('export const useGameStore =', 'const useGameStore = exports.useGameStore =')
 const player = {id:'p1', displayName:'Tester', identityTag:'abcde', root:false}
 const room = {id:'room1', players:[], game:null}
-function fixture() {
+function fixture(seed = {}) {
   const sockets = [], requests = [], history = []
   const scheduled = new Map()
   let timerId = 0
+  const local = new Map(Object.entries(seed.local ?? {})), session = new Map(Object.entries(seed.session ?? {}))
+  const storage = values => ({ getItem:key => values.get(key) ?? null, setItem:(key,value) => values.set(key,value), removeItem:key => values.delete(key) })
   class Socket {
     static OPEN = 1
     readyState = 0
@@ -28,7 +30,7 @@ function fixture() {
   }
   const context = vm.createContext({
     exports:{}, require, crypto, btoa, queueMicrotask, AbortController,
-    localStorage:{getItem:() => null, setItem:() => {}},
+    localStorage:storage(local), sessionStorage:storage(session),
     location:{protocol:'http:',host:'qa.test',hostname:'qa.test'},
     WebSocket:Socket, window:{
       setTimeout:(fn, delay) => { const id = ++timerId; scheduled.set(id, {fn,delay}); return id },
@@ -67,8 +69,71 @@ function fixture() {
     assert.ok(entry,`No timer scheduled for ${delay}ms`)
     scheduled.delete(entry[0]); entry[1].fn()
   }
-  return {store, sockets, get timers(){return [...scheduled.values()].map(timer=>timer.fn)}, requests, history, respond, reject, identify, runTimer}
+  return {store, sockets, local, session, get timers(){return [...scheduled.values()].map(timer=>timer.fn)}, requests, history, respond, reject, identify, runTimer}
 }
+
+test('root debug switching is tab-local, retires sockets, and restores root without replacing its stored identity', async () => {
+  const f = fixture(); await f.identify()
+  const root = { ...player, root:true }
+  f.store.setState({player:root})
+  f.local.set('bluff-table-player',JSON.stringify(root))
+  const rootToken = f.local.get('bluff-table-device-token')
+  const oldSocket = f.sockets[0]
+  const lateRoomUpdate = f.store.getState().loadRooms()
+  const switching = f.store.getState().switchIdentity()
+  const bot = {...player,id:'bot-id',displayName:'Debug bot',root:false}
+  const token = 'debug-bot-credential-with-more-than-thirty-two-chars'
+  await f.respond('/api/players/me/debug-identity',{player:bot,deviceToken:token})
+  await f.respond('/api/rooms',[{id:'old-root-response'}])
+  await lateRoomUpdate
+  assert.equal(f.store.getState().rooms.length,0)
+  await f.respond('/api/rooms',[])
+  await switching
+  assert.equal(oldSocket.readyState,3)
+  assert.equal(f.store.getState().debugMode,true)
+  assert.equal(JSON.parse(f.local.get('bluff-table-player')).id,root.id)
+  assert.equal(f.local.get('bluff-table-device-token'),rootToken)
+  f.sockets.at(-1).open()
+  assert.equal(f.sockets.at(-1).sent[0].payload.deviceToken,token)
+  const back = f.store.getState().switchIdentity()
+  assert.equal(f.requests.find(r=>r.path==='/api/players/me').options.headers.Authorization,`Bearer ${rootToken}`)
+  await f.respond('/api/players/me',root)
+  await f.respond('/api/rooms',[])
+  await back
+  assert.equal(f.store.getState().debugMode,false)
+  assert.equal(f.session.size,0)
+})
+
+test('non-root accounts and players inside a room cannot switch identity', async () => {
+  const f = fixture(); await f.identify()
+  await f.store.getState().switchIdentity()
+  assert.equal(f.requests.length,0)
+  f.store.setState({player:{...player,root:true},room})
+  await f.store.getState().switchIdentity()
+  assert.equal(f.requests.length,0)
+})
+
+test('reloading a debug tab authenticates the bot without registration or a root claim', async () => {
+  const root = {...player,root:true}
+  const bot = {...player,id:'bot-id',displayName:'Debug bot'}
+  const token = 'debug-bot-credential-with-more-than-thirty-two-chars'
+  const f = fixture({local:{'bluff-table-player':JSON.stringify(root),'bluff-table-device-token':'root-device-token-with-more-than-thirty-two-chars'},
+    session:{'bluff-table-debug-identity':JSON.stringify({rootId:root.id,player:bot,token})}})
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(f.requests[0].path,'/api/players/me')
+  assert.equal(f.requests[0].options.headers.Authorization,`Bearer ${token}`)
+  assert.equal(f.requests[0].options.headers['X-Bluff-Root-Claim'],undefined)
+  await f.respond('/api/players/me',bot)
+  await f.respond('/api/rooms',[])
+  assert.equal(f.store.getState().debugMode,true)
+  assert.equal(f.store.getState().player.id,bot.id)
+  assert.equal(JSON.parse(f.local.get('bluff-table-player')).id,root.id)
+  const rename = f.store.getState().renamePlayer('Test bot')
+  await f.respond('/api/players/me',{...bot,displayName:'Test bot'})
+  await rename
+  assert.equal(JSON.parse(f.session.get('bluff-table-debug-identity')).player.displayName,'Test bot')
+  assert.equal(JSON.parse(f.local.get('bluff-table-player')).displayName,root.displayName)
+})
 
 test('creating a table works while live authentication is pending and syncs after it connects', async () => {
   const f = fixture(); await f.identify(false)
