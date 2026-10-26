@@ -15,6 +15,10 @@ import {
 import type { GameCommand, GameState, InternalClaim } from './state.ts'
 import { pickWord } from './words.ts'
 
+function isSpellTrap(claim: InternalClaim) {
+  return claim.cards.length === 1 && claim.cards[0].rank === 'SPELL'
+}
+
 /** Only spelling-specific behavior lives here; all normal turns use classic. */
 export class LiarsDeck4FunEngine extends LiarsDeckEngine {
   override readonly type: GameType = 'LIARS_DECK_4_FUN'
@@ -22,15 +26,21 @@ export class LiarsDeck4FunEngine extends LiarsDeckEngine {
   protected override prepareHand(hand: Card[]) {
     hand.push({ id: randomUUID(), rank: 'SPELL', suit: 'SPADES' })
   }
+  protected override challengePenaltyRecipient(claim: InternalClaim, challenger: string, truth: boolean): string | null {
+    // A SPELL trap grades everyone separately. Applying the normal pool pickup
+    // here would penalize the challenger even when their spelling is correct.
+    return isSpellTrap(claim) ? null : super.challengePenaltyRecipient(claim, challenger, truth)
+  }
   protected override afterChallenge(
     state: GameState,
     claim: InternalClaim,
     penalty: number,
     truth: boolean,
-    now: number
+    now: number,
+    pool: Card[]
   ) {
-    if (claim.cards.length !== 1 || claim.cards[0].rank !== 'SPELL') {
-      super.afterChallenge(state, claim, penalty, truth, now)
+    if (!isSpellTrap(claim)) {
+      super.afterChallenge(state, claim, penalty, truth, now, pool)
       return
     }
     const word = pickWord(state.usedWords)
@@ -38,6 +48,7 @@ export class LiarsDeck4FunEngine extends LiarsDeckEngine {
       id: randomUUID(),
       defender: claim.playerId,
       penalty,
+      penaltyCards: structuredClone(pool),
       deadline: now + 15_000,
       stage: 'ACTIVE',
       questions: Object.fromEntries(state.order.map((id) => [id, word])),
@@ -47,7 +58,7 @@ export class LiarsDeck4FunEngine extends LiarsDeckEngine {
     }
     event(
       state,
-      `SPELL trap · everyone spells a word · wrong or timeout draws ${penalty}`
+      `SPELL trap · everyone spells a word · wrong or timeout draws a copy of the ${penalty}-card pool`
     )
   }
   protected override spellingCommand(
@@ -89,17 +100,30 @@ export class LiarsDeck4FunEngine extends LiarsDeckEngine {
           Object.keys(round.questions).length)
     )
       return
+    let poolAvailable = true
     for (const [playerId, word] of Object.entries(round.questions)) {
       const answer =
         round.answers[playerId] ?? round.drafts[playerId] ?? ''
       const correct =
         answer === word.text || word.alternatives.includes(answer)
-      if (!correct)
-        for (let i = 0; i < round.penalty; i++) {
-          if (!state.reserve.length)
-            state.reserve.push(...shuffle(this.buildDeck(state.deckCount)))
-          state.hands[playerId].push(state.reserve.shift()!)
+      if (!correct) {
+        if (round.penaltyCards) {
+          // Transfer the original pool once; other wrong spellers receive the
+          // same faces with fresh IDs so all copies remain independently playable.
+          state.hands[playerId].push(...round.penaltyCards.map(card => ({
+            ...card, id: poolAvailable ? card.id : randomUUID(),
+          })))
+          poolAvailable = false
+        } else {
+          // Older active challenges did not retain their pool. Preserve their
+          // saved penalty count rather than failing midway through settlement.
+          for (let i = 0; i < round.penalty; i++) {
+            if (!state.reserve.length)
+              state.reserve.push(...shuffle(this.buildDeck(state.deckCount)))
+            state.hands[playerId].push(state.reserve.shift()!)
+          }
         }
+      }
       sort(state.hands[playerId])
       round.results.push({
         playerId,
@@ -109,6 +133,7 @@ export class LiarsDeck4FunEngine extends LiarsDeckEngine {
         drawn: correct ? 0 : round.penalty
       })
     }
+    if (round.penaltyCards) round.penaltyCards = []
     round.stage = 'COMPLETE'
     event(state, 'Spelling complete · challenge resolved')
     if (state.hands[round.defender]) finishIfEmpty(state, round.defender)
@@ -132,7 +157,10 @@ export class LiarsDeck4FunEngine extends LiarsDeckEngine {
       delete round.questions[player]
       delete round.answers[player]
       delete round.drafts[player]
-      if (state.order.length <= 1) round.stage = 'CANCELLED'
+      if (state.order.length <= 1) {
+        round.stage = 'CANCELLED'
+        if (round.penaltyCards) round.penaltyCards = []
+      }
       else this.advanceSpelling(state, now)
     }
   }

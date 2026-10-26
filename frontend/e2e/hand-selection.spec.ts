@@ -32,6 +32,56 @@ async function selected(page: Page) {
   return page.locator('.playing-card[aria-pressed="true"]').evaluateAll(cards => cards.map(card => (card as HTMLElement).dataset.cardId))
 }
 
+test('phone taps select and clear individual cards with and without drag mode', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'Native taps require the phone profile')
+  await openHand(page)
+  const first = page.locator('[data-card-id="card-0"]')
+  const second = page.locator('[data-card-id="card-1"]')
+  await first.tap({ position: { x: 12, y: 60 } })
+  await expect(first).toHaveAttribute('aria-pressed', 'true')
+  await second.tap({ position: { x: 12, y: 60 } })
+  await expect(second).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('button', { name: 'PLAY 2', exact: true })).toBeEnabled()
+  await first.tap({ position: { x: 12, y: 60 } })
+  await expect(first).toHaveAttribute('aria-pressed', 'false')
+  await page.getByRole('button', { name: 'Drag select', exact: true }).tap()
+  await expect(page.getByRole('button', { name: 'Drag select', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await first.tap({ position: { x: 12, y: 60 } })
+  await expect(first).toHaveAttribute('aria-pressed', 'true')
+  await first.tap({ position: { x: 12, y: 60 } })
+  await expect(first).toHaveAttribute('aria-pressed', 'false')
+})
+
+test('phone selection tolerates a finger drifting vertically during a tap', async ({ page, isMobile, context }) => {
+  test.skip(!isMobile, 'Native touches require the phone profile')
+  await openHand(page, 4)
+  const cdp = await context.newCDPSession(page)
+  const first = page.locator('[data-card-id="card-0"]')
+  const drift = async (distance = 12) => {
+    const bounds = (await first.boundingBox())!
+    const touch = { x: bounds.x + 12, y: bounds.y + 40, id: 1 }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [touch] })
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...touch, y: touch.y + distance }] })
+    await page.evaluate(() => new Promise(requestAnimationFrame))
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  }
+  await drift()
+  await expect(first).toHaveAttribute('aria-pressed', 'true')
+  await page.getByRole('button', { name: 'Drag select', exact: true }).tap()
+  await expect(page.getByRole('button', { name: 'Drag select', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await drift(24)
+  await expect(first).toHaveAttribute('aria-pressed', 'false')
+})
+
+test('phone taps near the bottom edge keep the original card as the touch target', async ({ page, isMobile }) => {
+  test.skip(!isMobile, 'Native taps require the phone profile')
+  await openHand(page, 4)
+  const first = page.locator('[data-card-id="card-0"]')
+  const bounds = (await first.boundingBox())!
+  await first.tap({ position: { x: 12, y: bounds.height - 2 } })
+  await expect(first).toHaveAttribute('aria-pressed', 'true')
+})
+
 test('drag selects ranges in either direction, paints each card once, and preserves clicks and keyboard selection', async ({ page }) => {
   await openHand(page)
   const first = page.locator('[data-card-id="card-0"]')

@@ -4,6 +4,16 @@ import { game, other, outcome, room, self } from './fixtures'
 import type { GameOutcome } from '../src/types'
 
 describe('wallet isolation and receipts', () => {
+  it('describes SPELL penalties without falsely assigning the pool to the challenger', () => {
+    const receipt = outcome({ type: 'CHECK_FAILED', challengerId: other.id, penaltyMode: 'SPELLING', poolSize: 3 })
+    for (const viewer of [self.id, other.id, 'spectator']) {
+      const copy = outcomeCopy(receipt, viewer, id => id)
+      expect(copy.title).toBe('Spelling challenge!')
+      expect(copy.detail).toBe('Wrong or missed answers draw a copy of the 3-card pool, including SPELL. Correct answers draw none.')
+      expect(copy.tone).toBe('safe')
+      expect(copy.detail).not.toContain('take the')
+    }
+  })
   it.each([200, 50, 0])('one tomato lowers the total exactly 100 with %s earned coins', earned => {
     const view = game({ earnings: [{ playerId: self.id, amount: earned }],
       pendingClaim: { playerId: self.id, cardCount: 20, generation: 5, risk: 5000 } })

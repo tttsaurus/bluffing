@@ -1,9 +1,9 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { SpellingChallenge } from '../src/SpellingChallenge'
 import { useGameStore } from '../src/store'
 import type { SpellingView } from '../src/types'
-import { game, room, self } from './fixtures'
+import { game, room, self, other } from './fixtures'
 
 const amplifiers: { gain: { value: number }; connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }[] = []
 vi.stubGlobal('AudioContext', class {
@@ -98,6 +98,19 @@ it('shows answers and individual penalties only after settlement', () => {
   expect(screen.queryByRole('textbox')).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Back to the table' }))
   expect(screen.queryByLabelText('Spelling challenge')).toBeNull()
+})
+it('keeps penalties attached to player IDs even when nicknames match and result order is reversed', () => {
+  show({ stage: 'COMPLETE', results: [
+    { playerId: other.id, word: 'quiet', answer: 'quiet', correct: true, drawn: 0 },
+    { playerId: self.id, word: 'quiet', answer: 'wrong', correct: false, drawn: 7 },
+  ] })
+  render(<SpellingChallenge />)
+  const correct = screen.getByText(`${other.displayName} #${other.identityTag}`).closest('div')!
+  const wrong = screen.getByText(`${self.displayName} #${self.identityTag}`).closest('div')!
+  expect(within(correct).getByText('✓ Correct')).toBeTruthy()
+  expect(within(correct).queryByText('+7 cards')).toBeNull()
+  expect(within(wrong).getByText('+7 cards')).toBeTruthy()
+  expect(within(wrong).queryByText('✓ Correct')).toBeNull()
 })
 it('reports failed audio and allows reload during the countdown', () => {
   vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {})

@@ -25,7 +25,7 @@ export function FourFunRules() {
     <header><strong>✦ SPECIAL RULES</strong></header>
     <ul className="special-rule-list">
       <li>Truth-checking a single SPELL card starts a 15-second challenge</li>
-      <li>Everyone spells the word; wrong or missed answers draw cards</li>
+      <li>Everyone spells the word; each wrong or missed answer draws a copy of the whole pool, including SPELL cards</li>
     </ul>
   </section>
 }

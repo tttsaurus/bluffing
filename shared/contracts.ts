@@ -49,6 +49,8 @@ export interface GameOutcome {
   poolSize: number
   declaredRank: string | null
   revealedCards: Card[]
+  /** A SPELL check defers card penalties until each player's answer is graded. */
+  penaltyMode?: 'SPELLING'
 }
 export interface SpellingView {
   id: string

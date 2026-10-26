@@ -51,7 +51,8 @@ function outcome(
   challengerId: string | null,
   rewardPlayerId: string | null,
   amount: number,
-  revealedCards: Card[] = []
+  revealedCards: Card[] = [],
+  penaltyMode?: GameOutcome['penaltyMode']
 ) {
   state.outcomes.push({
     id: ++state.outcomeSequence,
@@ -62,7 +63,8 @@ function outcome(
     amount,
     poolSize: state.pool.length,
     declaredRank: state.targetRank,
-    revealedCards: structuredClone(revealedCards)
+    revealedCards: structuredClone(revealedCards),
+    ...(penaltyMode ? { penaltyMode } : {})
   })
   if (state.outcomes.length > 32) state.outcomes.shift()
 }
@@ -390,13 +392,14 @@ export class LiarsDeckEngine {
       'You cannot challenge your own claim'
     )
     const truth = this.isTruthful(claim.cards, state.targetRank!)
-    const penalty = state.pool.length,
-      recipient = truth ? challenger : claim.playerId,
+    const pool = state.pool,
+      penalty = pool.length,
+      recipient = this.challengePenaltyRecipient(claim, challenger, truth),
       next = truth ? claim.playerId : challenger
     pay(state, next, claim.risk * 2)
     event(
       state,
-      `${truth ? 'Truth! Challenger' : 'Lie caught! Bluffer'} takes ${penalty} cards · ${claim.risk * 2} coins earned`
+      `${recipient ? `${truth ? 'Truth! Challenger' : 'Lie caught! Bluffer'} takes ${penalty} cards` : 'Card penalties await the special challenge'} · ${claim.risk * 2} coins earned`
     )
     outcome(
       state,
@@ -405,24 +408,31 @@ export class LiarsDeckEngine {
       challenger,
       next,
       claim.risk * 2,
-      claim.cards
+      claim.cards,
+      recipient === null ? 'SPELLING' : undefined
     )
     resolvePlay(state, truth ? 'TRUTH' : 'LIE', challenger, claim.cards)
     recordAction(state, 'CHALLENGE', challenger)
-    state.hands[recipient].push(...state.pool)
-    sort(state.hands[recipient])
+    if (recipient !== null) {
+      state.hands[recipient].push(...state.pool)
+      sort(state.hands[recipient])
+    }
     clearPool(state)
     state.currentIndex = state.order.indexOf(next)
     state.initializerIndex = state.currentIndex
     if (!truth) state.lastNonFoldedPlayerId = challenger
-    this.afterChallenge(state, claim, penalty, truth, now)
+    this.afterChallenge(state, claim, penalty, truth, now, pool)
+  }
+  protected challengePenaltyRecipient(claim: InternalClaim, challenger: string, truth: boolean): string | null {
+    return truth ? challenger : claim.playerId
   }
   protected afterChallenge(
     state: GameState,
     claim: InternalClaim,
     _penalty: number,
     truth: boolean,
-    _now: number
+    _now: number,
+    _pool: Card[]
   ) {
     if (truth) finishIfEmpty(state, claim.playerId)
   }

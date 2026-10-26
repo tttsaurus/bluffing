@@ -137,6 +137,18 @@ describe('game UI', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss result' }))
   })
 
+  it('never tells the SPELL challenger that they already received the pool', () => {
+    useGameStore.setState({ player: other })
+    render(<RoundFeedback />)
+    act(() => useGameStore.setState({ room: room({ game: game({ outcomes: [outcome({
+      type: 'CHECK_FAILED', challengerId: other.id, penaltyMode: 'SPELLING',
+    })] }) }) }))
+    expect(screen.getByText('SPELLING CHALLENGE')).toBeTruthy()
+    expect(screen.getByText('Spelling challenge!')).toBeTruthy()
+    expect(screen.queryByText('Truth Check lost!')).toBeNull()
+    expect(screen.getByText('Wrong or missed answers draw a copy of the 2-card pool, including SPELL. Correct answers draw none.')).toBeTruthy()
+  })
+
   it('shows challenged cards only in the initiating challenger’s verdict', () => {
     render(<RoundFeedback />)
     act(() => useGameStore.setState({ room: room({ game: game({ outcomes: [outcome({

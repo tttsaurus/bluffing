@@ -119,7 +119,7 @@ export function RoundFeedback() {
     className={`verdict-card verdict-${copy.tone}`} key={`${game?.gameId}-${event.id}`} role="status" aria-live="polite"
     initial={{ opacity: 0, y: reduceMotion ? 0 : -28, scale: reduceMotion ? 1 : .88 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: reduceMotion ? 0 : -12 }} transition={{ type: 'spring', damping: 19, stiffness: 270 }}>
     <div className="verdict-stamp" aria-hidden="true">{copy.mark}</div>
-    <div className="verdict-content"><span className="verdict-label">{event.type.startsWith('CHECK_') ? 'TRUTH CHECK · VERDICT' : event.type === 'PLAY_VOIDED' ? 'REWARD CANCELLED' : 'REWARD CONFIRMED'}</span><h2>{copy.title}</h2><p>{copy.detail}</p>
+    <div className="verdict-content"><span className="verdict-label">{event.penaltyMode === 'SPELLING' ? 'SPELLING CHALLENGE' : event.type.startsWith('CHECK_') ? 'TRUTH CHECK · VERDICT' : event.type === 'PLAY_VOIDED' ? 'REWARD CANCELLED' : 'REWARD CONFIRMED'}</span><h2>{copy.title}</h2><p>{copy.detail}</p>
       {event.challengerId === player.id && event.revealedCards.length > 0 && <><p className="checked-rank">Claimed {event.declaredRank}s · revealed to you</p><div className="revealed-cards" aria-label="Checked cards">{event.revealedCards.map(card => <span key={card.id} className={card.suit === 'HEARTS' || card.suit === 'DIAMONDS' ? 'red' : ''}>{card.rank}{suitSymbols[card.suit]}</span>)}</div></>}
       {event.amount > 0 && event.rewardPlayerId === player.id && <div className="verdict-payment"><strong>+{event.amount} ◆</strong><span>BANKED TO YOUR WALLET</span></div>}
     </div><button className="verdict-close" aria-label="Dismiss result" onClick={() => setQueue([])}>×</button>

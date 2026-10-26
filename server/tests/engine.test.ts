@@ -412,11 +412,14 @@ test('a lone joker in 4 Fun Plus never triggers spelling', () => {
   challenge(state, b)
   assert.equal(state.spelling, null)
   assert.equal(state.earnings[a], 20)
+  assert.equal(state.hands[b].length, 4)
+  assert.equal(state.outcomes.at(-1)?.penaltyMode, undefined)
 })
 
-test('4 Fun Plus spelling penalties refill from its Plus deck', () => {
+test('legacy 4 Fun Plus challenges without a saved pool still refill from the Plus deck', () => {
   const { state, rules } = spell('LIARS_DECK_4FUN_PLUS')
   const round = state.spelling!, beforeB = state.hands[b].length
+  delete round.penaltyCards
   state.reserve = []
   for (const player of [a, b]) rules.command(state, player, {
     roomId: room, action: 'SPELL_ANSWER', spellingId: round.id,
@@ -431,6 +434,99 @@ test('4 Fun Plus spelling penalties refill from its Plus deck', () => {
 })
 
 for (const spellingType of ['LIARS_DECK_4_FUN', 'LIARS_DECK_4FUN_PLUS'] as const) {
+  test(`${spellingType}: every wrong speller receives the full pool and can replay its SPELL card`, () => {
+    const { state, rules } = fixture(spellingType, [a, b, c])
+    state.hands[a] = [spellingType === 'LIARS_DECK_4FUN_PLUS' ? card('JOKER', 'JOKER') : card('K', 'HEARTS'), card('Q', 'CLUBS'), card('2')]
+    state.hands[b] = [card('SPELL'), card('A'), card('3')]
+    play(state, a, 'A', state.hands[a].slice(0, 2))
+    play(state, b)
+    const pool = structuredClone(state.pool)
+    const before = Object.fromEntries(state.order.map(id => [id, state.hands[id].map(card => card.id)]))
+    const reserve = structuredClone(state.reserve)
+    challenge(state, c)
+    const round = state.spelling!
+    assert.deepEqual(round.penaltyCards, pool)
+    for (const viewer of [a, b, c, 'spectator']) assert.equal('penaltyCards' in rules.view(state, viewer).spelling!, false)
+    for (const id of [c, b, a]) rules.command(state, id, {
+      roomId: room, action: 'SPELL_ANSWER', spellingId: round.id,
+      answer: id === b ? round.questions[id].text : 'wrong',
+    }, 2000)
+    const faces = (cards: Card[]) => cards.map(card => `${card.rank}:${card.suit}`).sort()
+    for (const id of [a, c]) {
+      const drawn = state.hands[id].filter(card => !before[id].includes(card.id))
+      assert.deepEqual(faces(drawn), faces(pool))
+      assert.equal(round.results.find(result => result.playerId === id)!.drawn, pool.length)
+    }
+    assert.deepEqual(state.hands[b].map(card => card.id).sort(), [...before[b]].sort())
+    assert.deepEqual(state.reserve, reserve, 'new penalties copy the pool instead of drawing unrelated cards')
+    const supply = [...Object.values(state.hands).flat(), ...state.reserve]
+    assert.equal(new Set(supply.map(card => card.id)).size, supply.length)
+    assert.deepEqual(round.penaltyCards, [])
+    const copiedSpell = state.hands[c].find(card => card.rank === 'SPELL')!
+    assert.ok(!pool.some(card => card.id === copiedSpell.id), 'later copies get new playable IDs')
+    play(state, b)
+    play(state, c, 'A', [copiedSpell])
+    challenge(state, a)
+    assert.notEqual(state.spelling!.id, round.id)
+    assert.equal(state.spelling!.stage, 'ACTIVE')
+    assert.ok(state.spelling!.penaltyCards!.some(card => card.id === copiedSpell.id))
+    const next = state.spelling!
+    for (const id of state.order) rules.command(state, id, {
+      roomId: room, action: 'SPELL_ANSWER', spellingId: next.id, answer: next.questions[id].text,
+    }, 2000)
+    const settled = structuredClone(state.hands)
+    rules.tick(state, 20000)
+    assert.deepEqual(state.hands, settled)
+  })
+  test(`${spellingType}: a multi-card pool penalizes only wrong or timed-out spellers, including a bystander`, () => {
+    const { state, rules } = fixture(spellingType, [a, b, c])
+    state.hands[b] = [card('SPELL'), card('A'), card('2')]
+    play(state, a)
+    play(state, b)
+    const before = Object.fromEntries(state.order.map(id => [id, state.hands[id].length]))
+    challenge(state, c)
+    const round = state.spelling!
+    assert.equal(round.penalty, 2)
+    for (const id of state.order) assert.equal(state.hands[id].length, before[id])
+    rules.command(state, b, { roomId: room, action: 'SPELL_ANSWER', spellingId: round.id, answer: 'wrong' }, 2000)
+    rules.command(state, a, { roomId: room, action: 'SPELL_DRAFT', spellingId: round.id, answer: round.questions[a].text }, 2000)
+    rules.tick(state, round.deadline)
+    assert.equal(state.hands[a].length, before[a])
+    assert.equal(state.hands[b].length, before[b] + 2)
+    assert.equal(state.hands[c].length, before[c] + 2)
+    assert.deepEqual(round.results.map(result => [result.playerId, result.drawn]), [[a, 0], [b, 2], [c, 2]])
+    for (const viewer of [a, b, c]) {
+      const receipt = rules.view(state, viewer).outcomes!.at(-1)!
+      assert.equal(receipt.penaltyMode, 'SPELLING')
+      assert.equal(receipt.revealedCards.length, viewer === c ? 1 : 0)
+    }
+  })
+  for (const reverse of [false, true]) {
+    for (const [defenderCorrect, challengerCorrect] of [[true, true], [false, true], [true, false], [false, false]]) {
+      test(`${spellingType}: SPELL penalties follow each answer (reversed seats ${reverse}, defender ${defenderCorrect}, challenger ${challengerCorrect})`, () => {
+        const [defender, challenger] = reverse ? [b, a] : [a, b]
+        const { state, rules } = fixture(spellingType, [defender, challenger])
+        state.hands[defender] = [card('SPELL'), card('A'), card('2')]
+        play(state, defender)
+        const before = Object.fromEntries(state.order.map(id => [id, state.hands[id].length]))
+        const penalty = state.pool.length
+        challenge(state, challenger)
+        for (const id of state.order) assert.equal(state.hands[id].length, before[id], 'nobody draws before spelling is graded')
+        const round = state.spelling!
+        for (const [id, correct] of [[challenger, challengerCorrect], [defender, defenderCorrect]] as const) {
+          rules.command(state, id, { roomId: room, action: 'SPELL_ANSWER', spellingId: round.id,
+            answer: correct ? round.questions[id].text : 'definitely-wrong' }, 2000)
+        }
+        for (const [id, correct] of [[defender, defenderCorrect], [challenger, challengerCorrect]] as const) {
+          assert.equal(state.hands[id].length, before[id] + (correct ? 0 : penalty))
+          assert.equal(round.results.find(result => result.playerId === id)!.drawn, correct ? 0 : penalty)
+        }
+        const settled = structuredClone(state.hands)
+        rules.tick(state, 20000)
+        assert.deepEqual(state.hands, settled)
+      })
+    }
+  }
   test(`${spellingType}: a checked lone SPELL opens the same timed challenge for everyone without exposing the word`, () => {
     const { state, rules } = spell(spellingType)
     assert.equal(state.spelling?.stage, 'ACTIVE')
@@ -450,6 +546,8 @@ for (const spellingType of ['LIARS_DECK_4_FUN', 'LIARS_DECK_4FUN_PLUS'] as const
     challenge(state, b)
     assert.equal(state.spelling, null)
     assert.equal(state.earnings[a], 40)
+    assert.equal(state.hands[b].length, 5)
+    assert.equal(state.outcomes.at(-1)?.penaltyMode, undefined)
   })
   test(`${spellingType}: spelling correct/wrong answers settle once with exact pool-size penalties`, () => {
     const { state, rules } = spell(spellingType),

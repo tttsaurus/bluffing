@@ -616,6 +616,67 @@ test('expired sessions cannot re-enter an active game after reconnect', async ()
   )
   assert.equal((await roomsA.view(f.id, f.host)).game!.hands.length, 2)
 })
+for (const type of ['LIARS_DECK_4_FUN', 'LIARS_DECK_4FUN_PLUS'] as const) {
+  test(`${type}: cold-instance spelling settlement never gives the pool to a correct challenger`, async () => {
+    const f = await start(type, 3)
+    const [bystander, defender, challenger] = f.players.map(player => player.actor)
+    const s = await state(f.id)
+    s.order = [bystander.id, defender.id, challenger.id]
+    s.currentIndex = s.initializerIndex = 0
+    for (const actor of [bystander, defender, challenger]) s.hands[actor.id] = ['A', '2', '3'].map(rank => ({ id: randomUUID(), rank, suit: 'SPADES' }))
+    s.hands[defender.id][0].rank = 'SPELL'
+    await first.query('UPDATE rooms SET game_state=$2::jsonb WHERE id=$1', [f.id, JSON.stringify(s)])
+    await roomsA.command(bystander, { roomId: f.id, action: 'PLAY', cardIds: [s.hands[bystander.id][0].id], declaredRank: 'A' })
+    await roomsB.command(defender, { roomId: f.id, action: 'PLAY', cardIds: [s.hands[defender.id][0].id] })
+    const before = (await roomsA.view(f.id, f.host)).game!.hands
+    await roomsA.command(challenger, { roomId: f.id, action: 'CHALLENGE' })
+    const active = await state(f.id), round = active.spelling!
+    assert.equal(round.penalty, 2)
+    assert.deepEqual(round.penaltyCards!.map(card => card.id), [s.hands[bystander.id][0].id, s.hands[defender.id][0].id])
+    for (const hand of before) assert.equal(active.hands[hand.playerId].length, hand.cardCount)
+    await roomsB.command(defender, { roomId: f.id, action: 'SPELL_ANSWER', spellingId: round.id, answer: 'wrong' })
+    await roomsA.command(challenger, { roomId: f.id, action: 'SPELL_ANSWER', spellingId: round.id, answer: round.questions[challenger.id].text })
+    await roomsB.command(bystander, { roomId: f.id, action: 'SPELL_DRAFT', spellingId: round.id, answer: 'wrong' })
+    const pending = await state(f.id)
+    pending.spelling!.deadline = Date.now() - 100
+    await first.query('UPDATE rooms SET game_state=$2::jsonb WHERE id=$1', [f.id, JSON.stringify(pending)])
+    const cold = new Rooms(second)
+    const view = await cold.view(f.id, challenger)
+    for (const hand of view.game!.hands) {
+      const original = before.find(entry => entry.playerId === hand.playerId)!.cardCount
+      assert.equal(hand.cardCount, original + (hand.playerId === challenger.id ? 0 : 2))
+    }
+    assert.equal(view.game!.outcomes!.at(-1)!.penaltyMode, 'SPELLING')
+    assert.deepEqual((await cold.view(f.id, challenger)).game!.hands, view.game!.hands)
+    const settled = await state(f.id)
+    assert.deepEqual(settled.reserve, s.reserve)
+    for (const actor of [bystander, defender]) {
+      assert.ok(settled.hands[actor.id].some(card => card.rank === 'SPELL'))
+      assert.ok(settled.hands[actor.id].some(card => card.rank === 'A'))
+    }
+    const supply = [...Object.values(settled.hands).flat(), ...settled.reserve]
+    assert.equal(new Set(supply.map(card => card.id)).size, supply.length)
+    // JSONB may reorder question keys; either wrong speller can hold the original.
+    const copiedOwner = [bystander, defender].find(actor => settled.hands[actor.id].some(card => card.rank === 'SPELL' && card.id !== s.hands[defender.id][0].id))!
+    const copiedSpell = settled.hands[copiedOwner.id].find(card => card.rank === 'SPELL')!
+    let turn = settled
+    while (turn.order[turn.currentIndex] !== copiedOwner.id) {
+      const actor = f.players.find(player => player.actor.id === turn.order[turn.currentIndex])!.actor
+      await roomsA.command(actor, turn.pool.length
+        ? { roomId: f.id, action: 'FOLD' }
+        : { roomId: f.id, action: 'PLAY', cardIds: [turn.hands[actor.id].find(card => card.rank !== 'SPELL')!.id], declaredRank: 'A' })
+      turn = await state(f.id)
+    }
+    await roomsA.command(copiedOwner, { roomId: f.id, action: 'PLAY', cardIds: [copiedSpell.id], declaredRank: 'A' })
+    turn = await state(f.id)
+    const nextChecker = f.players.find(player => player.actor.id === turn.order[turn.currentIndex])!.actor
+    await roomsB.command(nextChecker, { roomId: f.id, action: 'CHALLENGE' })
+    const next = (await cold.view(f.id, challenger)).game!.spelling!
+    assert.equal(next.stage, 'ACTIVE')
+    assert.notEqual(next.id, round.id)
+  })
+}
+
 test('spelling deadline settles correctly on a different cold instance and never draws twice', async () => {
   const f = await start('LIARS_DECK_4_FUN'),
     s = await state(f.id),

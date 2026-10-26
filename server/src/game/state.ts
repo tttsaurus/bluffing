@@ -34,6 +34,8 @@ export interface SpellingRound {
   id: string
   defender: string
   penalty: number
+  /** Private pool held until grading. Optional for challenges saved by older servers. */
+  penaltyCards?: Card[]
   deadline: number
   stage: 'ACTIVE' | 'COMPLETE' | 'CANCELLED'
   questions: Record<string, Word>

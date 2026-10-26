@@ -71,4 +71,15 @@ test('4 Fun Plus is a separate room choice with both rules, setup and spelling U
   await page.getByLabel('YOUR SPELLING', { exact: true }).fill('quiet')
   await page.getByRole('button', { name: /Submit/ }).click()
   await expect.poll(() => commands.some(command => command.action === 'SPELL_ANSWER' && command.answer === 'quiet')).toBe(true)
+  view = { ...view, game: { ...view.game!, spelling: { ...view.game!.spelling!, stage: 'COMPLETE', results: [
+    { playerId: other.id, word: 'quiet', answer: 'quiet', correct: true, drawn: 0 },
+    { playerId: self.id, word: 'quiet', answer: 'wrong', correct: false, drawn: 1 },
+  ] } } }
+  broadcast()
+  const correct = page.locator('.spelling-results > div').filter({ hasText: `#${other.identityTag}` })
+  const wrong = page.locator('.spelling-results > div').filter({ hasText: `#${self.identityTag}` })
+  await expect(correct).toContainText('✓ Correct')
+  await expect(correct).not.toContainText('+1 cards')
+  await expect(wrong).toContainText('+1 cards')
+  await page.screenshot({ path: test.info().outputPath('spelling-penalties.png') })
 })

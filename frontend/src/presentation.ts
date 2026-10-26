@@ -50,6 +50,10 @@ export function turnOrder(game: GameView) {
 }
 
 export function outcomeCopy(outcome: GameOutcome, viewerId: string, name: (id: string) => string) {
+  if (outcome.penaltyMode === 'SPELLING') return {
+    title: 'Spelling challenge!', detail: `Wrong or missed answers draw a copy of the ${outcome.poolSize}-card pool, including SPELL. Correct answers draw none.`,
+    tone: 'safe', mark: '✎',
+  }
   const yours = outcome.playerId === viewerId
   const checking = outcome.challengerId === viewerId
   const defender = yours ? 'You' : name(outcome.playerId)

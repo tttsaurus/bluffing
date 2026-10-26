@@ -122,7 +122,10 @@ function Challenge({ round, volume, onVolumeChange }: { round: SpellingView; vol
     </form>}
     {error && !finished && <p role="alert">Audio unavailable. <button onClick={() => { setError(false); audio.current?.load() }}>Reload audio</button></p>}
     {!connected && !finished && <p role="alert">Reconnecting…</p>}
-    {round.stage === 'COMPLETE' && <div className="spelling-results">{round.results.map(result => <div key={result.playerId} className={result.correct ? 'correct' : 'incorrect'}><strong>{room?.players.find(p => p.id === result.playerId)?.displayName ?? 'Player'}</strong><span><b>{result.word}</b><small>{result.answer || '(no answer)'}</small></span><b>{result.correct ? '✓ Correct' : `+${result.drawn} cards`}</b></div>)}</div>}
+    {round.stage === 'COMPLETE' && <div className="spelling-results">{round.results.map(result => {
+      const member = room?.players.find(player => player.id === result.playerId)
+      return <div key={result.playerId} className={result.correct ? 'correct' : 'incorrect'}><strong>{member ? `${member.displayName} #${member.identityTag}` : 'Player'}</strong><span><b>{result.word}</b><small>{result.answer || '(no answer)'}</small></span><b>{result.correct ? '✓ Correct' : `+${result.drawn} cards`}</b></div>
+    })}</div>}
     {round.stage === 'CANCELLED' && <p>Challenge ended.</p>}
     <div className="spelling-footer"><a href="/api/spelling/credits" target="_blank" rel="noreferrer">Pronunciation credits</a>{finished && <button className="secondary" onClick={() => setDismissed(true)}>Back to the table</button>}</div>
   </section>
