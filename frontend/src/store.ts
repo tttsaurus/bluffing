@@ -115,12 +115,18 @@ export const useGameStore = create<Store>((set, get) => ({
   debugMode: Boolean(debugIdentity),
   switchIdentity: async () => {
     if (get().room || get().loading || get().bootstrapping || (!get().debugMode && !get().player?.root)) return
+    const requestEpoch = ++identityEpoch
     set({ loading: true, error: null })
     try {
       const returning = get().debugMode
+      const targetToken = returning ? rootToken : undefined
       const result = returning
         ? { player: await api<Player>('/api/players/me', { headers: { Authorization: `Bearer ${rootToken}` } }), deviceToken: rootToken }
         : await api<{ player: Player; deviceToken: string }>('/api/players/me/debug-identity', { method: 'POST' })
+      const targetRooms = await api<RoomSummary[]>('/api/rooms', {
+        headers: { Authorization: `Bearer ${targetToken ?? result.deviceToken}` },
+      })
+      if (requestEpoch !== identityEpoch) return
       // Persist before retiring the current identity: a storage failure must
       // leave its credentials and socket intact, not half-switch the tab.
       if (returning) {
@@ -134,10 +140,11 @@ export const useGameStore = create<Store>((set, get) => ({
       if (get().socket) retireSocket(get().socket!)
       deviceToken = result.deviceToken
       liveSessionId = crypto.randomUUID()
-      set({ player: result.player, debugMode: !returning, socket: null, connected: false, rooms: [], loading: false })
+      set({ player: result.player, debugMode: !returning, socket: null, connected: false, rooms: targetRooms, loading: false })
       connect(set, get)
-      await get().loadRooms()
-    } catch (error) { set({ error: message(error), loading: false }) }
+    } catch (error) {
+      if (requestEpoch === identityEpoch) set({ error: message(error), loading: false })
+    }
   },
   reconnect: () => { if (get().player && !get().bootstrapping && !get().connected) connect(set, get) },
 

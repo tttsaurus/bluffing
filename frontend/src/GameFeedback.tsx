@@ -104,26 +104,25 @@ export function RoundFeedback() {
     const fresh = freshOutcomes(game?.outcomes ?? [], cursor.current.id)
     if (!fresh.length) return
     cursor.current.id = fresh.at(-1)!.id
-    setQueue(previous => [...previous, ...fresh.filter(outcome => player && shouldNotifyOutcome(outcome, player.id))])
+    const notices = fresh.filter(outcome => player && shouldNotifyOutcome(outcome, player.id))
+    if (notices.length) setQueue([notices.at(-1)!])
   }, [game?.gameId, game?.outcomes, player])
   const event = queue[0]
-  const crowded = queue.length > 1
   useEffect(() => {
     if (!event) return
-    // Keep bursts of receipts near live play instead of building a long animation backlog.
-    const timer = window.setTimeout(() => setQueue(previous => previous.slice(1)), crowded ? 1800 : 4800)
+    const timer = window.setTimeout(() => setQueue([]), 3600)
     return () => window.clearTimeout(timer)
-  }, [event, crowded])
+  }, [event])
   if (!room || !player) return null
   const copy = event && outcomeCopy(event, player.id, id => playerName(room, id))
-  return <div className="verdict-layer"><AnimatePresence mode="wait">{event && copy && <motion.aside
+  return <div className="verdict-layer"><AnimatePresence>{event && copy && <motion.aside
     className={`verdict-card verdict-${copy.tone}`} key={`${game?.gameId}-${event.id}`} role="status" aria-live="polite"
     initial={{ opacity: 0, y: reduceMotion ? 0 : -28, scale: reduceMotion ? 1 : .88 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: reduceMotion ? 0 : -12 }} transition={{ type: 'spring', damping: 19, stiffness: 270 }}>
     <div className="verdict-stamp" aria-hidden="true">{copy.mark}</div>
     <div className="verdict-content"><span className="verdict-label">{event.type.startsWith('CHECK_') ? 'TRUTH CHECK · VERDICT' : event.type === 'PLAY_VOIDED' ? 'REWARD CANCELLED' : 'REWARD CONFIRMED'}</span><h2>{copy.title}</h2><p>{copy.detail}</p>
       {event.challengerId === player.id && event.revealedCards.length > 0 && <><p className="checked-rank">Claimed {event.declaredRank}s · revealed to you</p><div className="revealed-cards" aria-label="Checked cards">{event.revealedCards.map(card => <span key={card.id} className={card.suit === 'HEARTS' || card.suit === 'DIAMONDS' ? 'red' : ''}>{card.rank}{suitSymbols[card.suit]}</span>)}</div></>}
       {event.amount > 0 && event.rewardPlayerId === player.id && <div className="verdict-payment"><strong>+{event.amount} ◆</strong><span>BANKED TO YOUR WALLET</span></div>}
-    </div><button className="verdict-close" aria-label="Dismiss result" onClick={() => setQueue(previous => previous.slice(1))}>×</button>
+    </div><button className="verdict-close" aria-label="Dismiss result" onClick={() => setQueue([])}>×</button>
   </motion.aside>}</AnimatePresence></div>
 }
 

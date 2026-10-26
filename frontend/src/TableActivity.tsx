@@ -54,8 +54,10 @@ export function TableSeats({ room, playerId }: { room: RoomView; playerId: strin
       style={self ? undefined : { left: `${50 + 44 * Math.cos(angle)}%`, top: `${50 + 43 * Math.sin(angle)}%` }}
       aria-current={current ? 'step' : undefined}>
       {lastNonFolded && <span className="seat-non-folded-marker" aria-label="Last non-folded player">LAST NON-FOLDED</span>}
-      <div className="seat-avatar"><PlayerAvatar avatar={member?.equippedAvatar} /><span>{hand.cardCount}</span></div>
-      {status && <small>{status}</small>}
+      <div className="seat-avatar"><PlayerAvatar avatar={member?.equippedAvatar} />{!self && <span>{hand.cardCount}</span>}</div>
+      {status && <small className={current ? 'seat-thinking' : undefined}>
+        {current ? <>THINKING<span className="thinking-dots" aria-hidden="true"><i /><i /><i /></span></> : status}
+      </small>}
       <strong title={`${member?.displayName ?? 'Player'} #${member?.identityTag ?? ''}`}>{member?.displayName ?? 'Player'}<span className="seat-identity-tag">#{member?.identityTag}</span></strong>
       {self && <small>YOU</small>}
       {(player?.root || room.hostId === playerId) && !self && <button className="seat-remove" aria-label={`Kick ${member?.displayName ?? 'Player'}`} onClick={() => void kickPlayer(room.id, hand.playerId)}>×</button>}
