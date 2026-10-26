@@ -54,25 +54,35 @@ test('local and remote plays throw cards, folds stay at seats, and checks reveal
   await expect(page.locator('.table-seat')).toHaveCount(2)
   await expect(page.locator('.table-action-effect')).toHaveCount(0)
   await page.locator('.pool canvas').evaluate(canvas => canvas.setAttribute('data-kept', 'pool'))
-  await page.locator('.turn-aura canvas').evaluate(canvas => canvas.setAttribute('data-kept', 'felt'))
+  const tableAppearance = () => page.locator('.felt').evaluate(element => {
+    const style = getComputedStyle(element)
+    return { background: style.background, borderColor: style.borderColor, boxShadow: style.boxShadow }
+  })
+  const houseFelt = await tableAppearance()
+  await expect(page.locator('.turn-aura, .shader-surface')).toHaveCount(0)
   view = { ...view, actions: [first], plays: [play], poolSize: 2, targetRank: 'A', currentPlayerId: other.id }
   await show(page, skinnedRoom(view))
+  // A flying card uses a 2D copy of its owner's exact shader artwork. Its fixed
+  // left/top remain unchanged while a compositor transform moves it to the pool.
+  const flight = await page.locator('.thrown-card').first().evaluate(element => {
+    const animation = element.getAnimations().find(animation => (animation.effect as KeyframeEffect).getKeyframes().some(frame => frame.transform))!
+    animation.pause()
+    animation.currentTime = 100
+    const initial = { left: element.getAttribute('style')!.match(/left: [^;]+/)?.[0], top: element.getAttribute('style')!.match(/top: [^;]+/)?.[0], transform: getComputedStyle(element).transform }
+    animation.currentTime = 300
+    const transform = getComputedStyle(element).transform
+    const compositorFrames = (animation.effect as KeyframeEffect).getKeyframes().filter(frame => frame.transform).length
+    animation.play()
+    const canvas = element.querySelector('canvas')!
+    const context = canvas.getContext('2d')!
+    return { initial, left: (element as HTMLElement).style.left, top: (element as HTMLElement).style.top,
+      transform, pixel: [...context.getImageData(60, 90, 1, 1).data], compositorFrames }
+  })
   await expect(page.locator('.effect-play')).toHaveAttribute('data-player-id', self.id)
   await expect(page.locator('.thrown-card')).toHaveCount(2)
   await expect(page.locator('.thrown-card .skin-aurora')).toHaveCount(2)
   await expect(page.locator('.pool canvas')).toHaveAttribute('data-kept', 'pool')
-  await expect(page.locator('.turn-aura canvas')).toHaveAttribute('data-kept', 'felt')
-  // A flying card uses a 2D copy of its owner's exact shader artwork. Its fixed
-  // left/top remain unchanged while a compositor transform moves it to the pool.
-  const flight = await page.locator('.thrown-card').first().evaluate(async element => {
-    const initial = { left: element.getAttribute('style')!.match(/left: [^;]+/)?.[0], top: element.getAttribute('style')!.match(/top: [^;]+/)?.[0], transform: getComputedStyle(element).transform }
-    await new Promise(resolve => setTimeout(resolve, 100))
-    const canvas = element.querySelector('canvas')!
-    const context = canvas.getContext('2d')!
-    return { initial, left: (element as HTMLElement).style.left, top: (element as HTMLElement).style.top,
-      transform: getComputedStyle(element).transform, pixel: [...context.getImageData(60, 90, 1, 1).data],
-      compositorFrames: element.getAnimations().flatMap(animation => (animation.effect as KeyframeEffect).getKeyframes()).filter(frame => frame.transform).length }
-  })
+  expect(await tableAppearance()).toEqual(houseFelt)
   expect(flight.initial.left).toBe(`left: ${flight.left}`)
   expect(flight.initial.top).toBe(`top: ${flight.top}`)
   expect(flight.transform).not.toBe(flight.initial.transform)
@@ -92,7 +102,7 @@ test('local and remote plays throw cards, folds stay at seats, and checks reveal
   await expect(page.locator('.effect-play')).toHaveAttribute('data-player-id', other.id)
   await expect(page.locator('.thrown-card .skin-supernova')).toHaveCount(2)
   await expect(page.locator('.pool canvas')).toHaveAttribute('data-kept', 'pool')
-  await expect(page.locator('.turn-aura canvas')).toHaveAttribute('data-kept', 'felt')
+  expect(await tableAppearance()).toEqual(houseFelt)
   await page.screenshot({ path: test.info().outputPath('remote-throw.png') })
   await expect(page.locator('.effect-play')).toHaveCount(0)
   const checked = { ...first, id: 4, type: 'CHALLENGE' as const, playId: 2 }

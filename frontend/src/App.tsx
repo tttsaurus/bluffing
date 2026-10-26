@@ -13,6 +13,8 @@ import { recentActions, skinNames, tableSkins } from './presentation'
 import { PlayHistory, RoundFeedback, Wallets } from './GameFeedback'
 import { TableActivity, TableSeats } from './TableActivity'
 import { TableActionEffects } from './TableActionEffects'
+import { ThrowBar } from './ThrowBar'
+import { ThrowEffects } from './ThrowEffects'
 import { gameModes, ranks } from './gameModes'
 import { FourFunRules, PlusRules } from './PlusRules'
 
@@ -207,7 +209,8 @@ function WaitingRoom() {
   const canManage = isHost || player.root
   const activeCount = room.players.filter(member => member.presence === 'ACTIVE').length
   const mode = gameModes[room.gameType]
-  const plus = mode.ruleHint === 'plus'
+  const plus = mode.ruleHints.includes('plus')
+  const spelling = mode.ruleHints.includes('spelling')
   const random = mode.randomDecks && randomDecks
   const capacity = mode.cardsPerDeck * (random ? 1 : decks)
   const maxHand = Math.floor(capacity / Math.max(1, activeCount))
@@ -234,8 +237,8 @@ function WaitingRoom() {
           <button className="primary" disabled={activeCount < 2 || !validHand || loading || !connected} onClick={() => void startGame(decks, custom ? cards : null, random)}>{activeCount < 2 ? 'Need 2 players here' : !validHand ? 'Not enough cards' : 'Deal the cards'} <b>→</b></button>
         </section>}
       </section>
-      {plus && <PlusRules />}
-      {mode.ruleHint === 'spelling' && <FourFunRules />}
+      {plus && <PlusRules spellWild={spelling} />}
+      {spelling && <FourFunRules />}
       <Leaderboards />
       <DeckShop />
     </motion.div>
@@ -278,6 +281,7 @@ function GameTable({ onEffectsPending }: { onEffectsPending: (pending: boolean) 
   const spellingRunning = game.spelling?.stage === 'ACTIVE'
   const myTurn = connected && !spellingRunning && game.currentPlayerId === player.id && game.phase === 'ACTIVE'
   const participating = game.hands.some(hand => hand.playerId === player.id)
+  const mode = gameModes[room.gameType]
   const skins = tableSkins(room)
   const risk = game.generation * selected.length * 10
   const rewardGeneration = myTurn ? game.generation : game.lastClaim?.generation ?? game.generation
@@ -289,6 +293,7 @@ function GameTable({ onEffectsPending }: { onEffectsPending: (pending: boolean) 
     <motion.div className="game page battle-page" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
       <RoundFeedback />
       <SpellingChallenge />
+      <ThrowEffects room={room} arena={arena} />
       <div className="battle-top">
         <div className="current-play-bar"><TableActivity room={room} myTurn={myTurn} /></div>
         <details className="history-menu"><summary>Recent plays <span>{recentActions(game).length}</span></summary><PlayHistory room={room} /></details>
@@ -297,8 +302,7 @@ function GameTable({ onEffectsPending }: { onEffectsPending: (pending: boolean) 
       <div className="game-layout battle-layout">
         <section className="felt-wrap">
           <div className="table-arena" ref={arena}>
-            <div className={`felt turn-skin-${skins.turn.toLowerCase()}`}>
-              <div className="turn-aura"><CardBack skin={skins.turn} surface /><div className="aura-rings" /></div>
+            <div className="felt">
               <div className="felt-line" />
               <motion.div className="pool" initial={{ scale: .85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
                 <div className={game.poolSize ? `card-stack pool-skin-${skins.pool.toLowerCase()}` : 'pool-preview'}>
@@ -331,8 +335,8 @@ function GameTable({ onEffectsPending }: { onEffectsPending: (pending: boolean) 
             </div>
             <CardHand cards={game.hand} selected={selected} disabled={!myTurn} onSelectionChange={setSelected} scrollRef={handScroll} />
           </section>}
-          {gameModes[room.gameType].ruleHint === 'plus' && <div className="battle-rules"><PlusRules cards={game.hand.filter(card => selected.includes(card.id))} rank={game.targetRank ?? rank} /></div>}
-          {gameModes[room.gameType].ruleHint === 'spelling' && <div className="battle-rules"><FourFunRules /></div>}
+          {mode.ruleHints.includes('plus') && <div className="battle-rules"><PlusRules cards={game.hand.filter(card => selected.includes(card.id))} rank={game.targetRank ?? rank} spellWild={mode.ruleHints.includes('spelling')} /></div>}
+          {mode.ruleHints.includes('spelling') && <div className="battle-rules"><FourFunRules /></div>}
           <aside className="battle-reward-board" aria-label="Reward and wallet">
             <div className="reward-board-heading"><strong>{gameModes[room.gameType].name}</strong></div>
             <Wallets room={room} playerId={player.id} />
@@ -347,6 +351,7 @@ function GameTable({ onEffectsPending }: { onEffectsPending: (pending: boolean) 
           </aside>
         </section>
       </div>
+      <ThrowBar room={room} playerId={player.id} />
     </motion.div>
   )
 }

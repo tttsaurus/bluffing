@@ -26,9 +26,16 @@ export function tableSkins(room: RoomView) {
 
 export function gameWallet(game: GameView, playerId: string) {
   return {
-    earned: game.earnings?.find(entry => entry.playerId === playerId)?.amount ?? 0,
+    earned: Math.max(0, (game.earnings?.find(entry => entry.playerId === playerId)?.amount ?? 0)
+      - (game.throwSpending?.find(entry => entry.playerId === playerId)?.fromEarnings ?? 0)),
     pending: game.pendingClaim?.playerId === playerId ? game.pendingClaim.risk : 0,
   }
+}
+
+/** The server balance already contains confirmed earnings; split it only for display. */
+export function walletBalances(game: GameView, playerId: string, balance: number) {
+  const wallet = gameWallet(game, playerId)
+  return { ...wallet, room: game.phase === 'ACTIVE' ? Math.max(0, balance - wallet.earned) : balance, available: balance }
 }
 
 export function turnOrder(game: GameView) {

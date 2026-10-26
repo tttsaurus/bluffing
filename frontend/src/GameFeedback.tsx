@@ -1,7 +1,7 @@
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
 import { useGameStore } from './store'
-import { freshOutcomes, gameWallet, outcomeCopy, recentActions, shouldNotifyOutcome, turnOrder } from './presentation'
+import { freshOutcomes, walletBalances, outcomeCopy, recentActions, shouldNotifyOutcome, turnOrder } from './presentation'
 import type { GameOutcome, RoomView } from './types'
 import { suitSymbols } from './gameModes'
 
@@ -14,8 +14,8 @@ function playerName(room: RoomView, id: string) {
 
 export function Wallets({ room, playerId }: { room: RoomView; playerId: string }) {
   const game = room.game!
-  const wallet = gameWallet(game, playerId)
   const member = room.players.find(player => player.id === playerId)
+  const wallet = walletBalances(game, playerId, member?.balance ?? 0)
   const previous = useRef(wallet.earned)
   const [deposit, setDeposit] = useState<{ amount: number; id: number } | null>(null)
   const reduceMotion = useReducedMotion()
@@ -36,13 +36,13 @@ export function Wallets({ room, playerId }: { room: RoomView; playerId: string }
     <div className="wallet-grid">
       <div className={`wallet-cell game-wallet ${deposit ? 'deposit-active' : ''}`}>
         <span>THIS GAME</span><motion.strong key={wallet.earned} initial={false} animate={reduceMotion ? {} : { scale: [1, 1.12, 1] }}>+{wallet.earned.toLocaleString()} <i>◆</i></motion.strong>
+        <AnimatePresence>{deposit && <motion.div className="coin-deposit" key={deposit.id} initial={{ opacity: 0, y: reduceMotion ? 0 : 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} role="status">+{deposit.amount} BANKED ✓</motion.div>}</AnimatePresence>
       </div>
       <div className={`wallet-cell pending-wallet ${wallet.pending ? 'has-pending' : ''}`}>
         <span>AWAITING VERDICT</span><strong>{wallet.pending ? wallet.pending.toLocaleString() : '—'} <i>◇</i></strong>
       </div>
-      <div className={`wallet-cell room-wallet ${deposit ? 'deposit-active' : ''}`}>
-        <span>ROOM WALLET</span><strong>{member.balance.toLocaleString()} <i>◆</i></strong>
-        <AnimatePresence>{deposit && <motion.div className="coin-deposit" key={deposit.id} initial={{ opacity: 0, y: reduceMotion ? 0 : 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} role="status">+{deposit.amount} BANKED ✓</motion.div>}</AnimatePresence>
+      <div className="wallet-cell room-wallet">
+        <span>ROOM WALLET</span><strong>{wallet.room.toLocaleString()} <i>◆</i></strong>
       </div>
     </div>
     {wallet.pending > 0 ? <div className="wallet-receipt receipt-pending"><span className="verdict-spinner" aria-hidden="true">◇</span><strong>Your play is pending</strong><span>Safe play → +{wallet.pending} · Defend truth → +{wallet.pending * 2}</span></div>

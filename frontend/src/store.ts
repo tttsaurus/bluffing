@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AvatarId, GameType, Player, RoomSummary, RoomView, SkinId } from './types'
+import type { AvatarId, GameType, Player, RoomSummary, RoomView, SkinId, ThrowItemId } from './types'
 
 type GameAction = 'PLAY' | 'FOLD' | 'CHALLENGE' | 'SPELL_ANSWER' | 'SPELL_DRAFT'
 
@@ -29,6 +29,7 @@ interface Store {
   changeSkin: (skinId: SkinId, purchase: boolean) => Promise<void>
   stopGame: (gameId: string | null) => Promise<boolean>
   command: (action: GameAction, cardIds?: string[], declaredRank?: string, spellingId?: string, answer?: string) => void
+  throwItem: (item: ThrowItemId, targetId: string) => boolean
   clearError: () => void
 }
 
@@ -48,6 +49,10 @@ let navigation = 0
 let reconnectTimer: number | undefined
 let connectionTimer: number | undefined
 let reconnectAttempts = 0
+type ThrowRequest = { playerId: string; payload: {
+  roomId: string; gameId: string; requestId: string; action: 'THROW'; item: ThrowItemId; targetId: string
+} }
+const pendingThrows = new Map<string, ThrowRequest>()
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const controller = new AbortController()
@@ -139,6 +144,7 @@ export const useGameStore = create<Store>((set, get) => ({
       window.clearTimeout(connectionTimer)
       if (get().socket) retireSocket(get().socket!)
       deviceToken = result.deviceToken
+      pendingThrows.clear()
       liveSessionId = crypto.randomUUID()
       set({ player: result.player, debugMode: !returning, socket: null, connected: false, rooms: targetRooms, loading: false })
       connect(set, get)
@@ -250,6 +256,7 @@ export const useGameStore = create<Store>((set, get) => ({
 
   leaveRoom: () => {
     ++navigation
+    pendingThrows.clear()
     if (get().connected) sendIfOpen(get().socket, { type: 'LEAVE_ROOM', payload: {} })
     set({ room: null, loading: false })
     void get().loadRooms()
@@ -309,6 +316,26 @@ export const useGameStore = create<Store>((set, get) => ({
       return
     }
     socket.send(JSON.stringify({ type: 'GAME_COMMAND', payload: { roomId: room.id, action, cardIds, declaredRank, spellingId, answer, requestId: crypto.randomUUID(), gameId: room.game?.gameId } }))
+  },
+
+  throwItem: (item, targetId) => {
+    const { socket, room, connected, player } = get()
+    if (!connected || !player || !room || room.game?.phase !== 'ACTIVE' || !socket || socket.readyState !== WebSocket.OPEN) {
+      set({ error: 'Live connection is not ready yet' })
+      return false
+    }
+    const request: ThrowRequest = { playerId: player.id, payload: { roomId: room.id, gameId: room.game.gameId,
+      action: 'THROW', item, targetId, requestId: crypto.randomUUID() } }
+    pendingThrows.set(request.payload.requestId, request)
+    set({ error: null })
+    try {
+      socket.send(JSON.stringify({ type: 'GAME_COMMAND', payload: request.payload }))
+      return true
+    } catch {
+      pendingThrows.delete(request.payload.requestId)
+      set({ error: 'The connection closed before the throw could be sent' })
+      return false
+    }
   },
 
   clearError: () => set({ error: null }),
@@ -376,19 +403,30 @@ function connect(set: (partial: Partial<Store>) => void, get: () => Store) {
       set({ connected: true })
       const room = get().room
       if (room) socket.send(JSON.stringify({ type: 'SYNC_ROOM', payload: { roomId: room.id } }))
+      // The old connection may have committed the purchase without delivering
+      // its receipt. Reuse the same ID so a reconnect can never charge it twice.
+      for (const request of pendingThrows.values()) {
+        if (request.playerId === get().player?.id && request.payload.roomId === room?.id
+          && request.payload.gameId === room?.game?.gameId) {
+          socket.send(JSON.stringify({ type: 'GAME_COMMAND', payload: request.payload }))
+        }
+      }
     }
     if (message.type === 'ROOM_STATE' && get().room?.id === message.payload.id) {
       setRoomIfChanged(set, get, message.payload)
     }
     if (['KICKED', 'ROOM_DELETED', 'ROOM_REJECTED'].includes(message.type) && get().room?.id === message.payload.roomId) {
       ++navigation
+      pendingThrows.clear()
       set({ room: null, loading: false, error: message.type === 'ROOM_REJECTED' ? message.payload.message : message.type === 'KICKED' ? 'You were removed from the table' : 'This table was deleted' })
       void get().loadRooms()
     }
     if (message.type === 'ERROR') {
+      pendingThrows.delete(message.payload.requestId)
       if (!authenticated) disconnect(true)
       else set({ error: message.payload.message })
     }
+    if (message.type === 'THROW_CONFIRMED') pendingThrows.delete(message.payload.requestId)
   }
 }
 
@@ -412,6 +450,10 @@ function retireSocket(socket: WebSocket) {
 function message(error: unknown) { return error instanceof Error ? error.message : 'Something went wrong' }
 
 function setRoomIfChanged(set: (partial: Partial<Store>) => void, get: () => Store, room: RoomView) {
+  for (const [id, request] of pendingThrows) {
+    if (request.payload.roomId === room.id
+      && (room.game?.gameId !== request.payload.gameId || room.game?.phase !== 'ACTIVE')) pendingThrows.delete(id)
+  }
   if (get().room?.id === room.id && JSON.stringify(get().room) !== JSON.stringify(room)) set({ room })
 }
 

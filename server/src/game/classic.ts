@@ -7,6 +7,7 @@ import type {
 } from '../../../shared/contracts.ts'
 import { invariant } from '../errors.ts'
 import { classicCatalog } from './catalog.ts'
+import { purchaseThrow } from './throwables.ts'
 import {
   RANKS,
   type GameCommand,
@@ -182,7 +183,7 @@ export class LiarsDeckEngine {
     )
     invariant(
       !settings.randomDeckCount || this.randomDecks,
-      'Random deck counts are only available in Liar’s Deck Plus'
+      'Random deck counts are only available in Plus game modes'
     )
     invariant(
       Number.isInteger(settings.deckCount) &&
@@ -259,10 +260,15 @@ export class LiarsDeckEngine {
     state: GameState,
     playerId: string,
     command: GameCommand,
-    now = Date.now()
+    now = Date.now(),
+    walletBalance = 0
   ) {
     this.assertState(state)
     invariant(state.phase === 'ACTIVE', 'This game has finished')
+    if (command.action === 'THROW') {
+      purchaseThrow(state, playerId, command, walletBalance)
+      return
+    }
     if (
       command.action === 'SPELL_ANSWER' ||
       command.action === 'SPELL_DRAFT'
@@ -496,6 +502,8 @@ export class LiarsDeckEngine {
       winnerId: state.winnerId,
       participants: [...state.participants],
       actions: state.actions && structuredClone(state.actions),
+      throws: structuredClone(state.throws ?? []),
+      throwSpending: Object.entries(state.throwSpending ?? {}).map(([playerId, spending]) => ({ playerId, ...spending })),
       pendingClaim: claimView(state.pendingClaim),
       earnings: state.participants.map((playerId) => ({
         playerId,

@@ -1,6 +1,6 @@
 # Bluff Table
 
-A multiplayer card-game framework with Liar's Deck, Liar's Deck Plus, and Liar's Deck 4 Fun.
+A multiplayer card-game framework with Liar's Deck, Liar's Deck Plus, Liar's Deck 4 Fun, and Liar's Deck 4 Fun Plus.
 
 ## How it works
 
@@ -12,7 +12,9 @@ The project has three parts:
 
 A room has one game type, chosen when it is created. Each deal has its own deck count, hand size, and randomized seat order. Room wallets, purchases, and records persist between deals.
 
-Each game type has its own engine class. Plus and 4 Fun inherit classic dealing, turns, checks, folds, and payouts, then add only their special rules. All three reuse the classic shop catalog and the same frontend setup/table components. State and ownership stay separate for every room and player.
+Each game type has its own engine class. Plus and 4 Fun inherit classic dealing, turns, checks, folds, and payouts, then add only their special rules. `LIARS_DECK_4FUN_PLUS` has a separate engine that combines Plus's 54-card decks, jokers, straight claims, and random deck counts with 4 Fun's extra SPELL card per player and timed spelling challenges. Jokers and SPELL cards are wild, including in straight claims; only a checked lone SPELL triggers spelling. All four reuse the classic shop catalog and the same frontend setup/table components. State, wallets, ownership, and records stay separate for every room and player; the three existing game types keep their original rules.
+
+During an active deal, open the collapsible **Throwables** bar, choose another player, and buy a Tomato (100 coins), Airplane (500), or Coffee (300). Available coins are **This game + Room wallet**: unspent confirmed earnings from that deal are spent first, followed by room coins; coins awaiting a truth-check verdict cannot be spent. The two displayed balances are separate, so earnings are never counted twice. Throws appear for everyone without consuming a turn, and cannot be bought in the lobby or by spectators. Force-stopping a deal restores its pre-deal wallets, including throw costs.
 
 Your browser stores a persistent account credential. Nicknames can overlap; the short identity hash distinguishes accounts. Clearing browser storage or changing browser/origin does not automatically recover that credential.
 

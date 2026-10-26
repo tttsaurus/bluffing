@@ -335,7 +335,7 @@ test('host/root can recover a missing engine state and restore its wallet checkp
 })
 test('all engine room types inherit classic shop contents without sharing ownership or wallets', async () => {
   let expected: unknown
-  for (const type of ['LIARS_DECK', 'LIARS_DECK_PLUS', 'LIARS_DECK_4_FUN'] as const) {
+  for (const type of ['LIARS_DECK', 'LIARS_DECK_PLUS', 'LIARS_DECK_4_FUN', 'LIARS_DECK_4FUN_PLUS'] as const) {
     const f = await setup(type)
     const view = await roomsA.view(f.id, f.host)
     const catalog = { skins: view.skins, avatars: view.avatars }
@@ -351,6 +351,48 @@ test('all engine room types inherit classic shop contents without sharing owners
     assert.equal(other.players.find(p => p.id !== f.host.id)!.balance, 0)
   }
 })
+test('4 Fun Plus survives cold reads and keeps the same players wallets, ownership and records separate from the original modes', async () => {
+  const f = await setup('LIARS_DECK_4FUN_PLUS')
+  const guest = f.players.find(player => player.actor.id !== f.host.id)!.actor
+  const originals = [] as string[]
+  for (const type of ['LIARS_DECK', 'LIARS_DECK_PLUS', 'LIARS_DECK_4_FUN'] as const) {
+    const original = await roomsA.create(f.host, `Separate ${type}`, type)
+    roomIds.add(original.id)
+    originals.push(original.id)
+    await roomsA.join(original.id, guest)
+  }
+  await first.query('UPDATE room_memberships SET balance=1000 WHERE room_id=$1 AND player_id=$2', [f.id, f.host.id])
+  await roomsA.cosmetic(f.id, f.host, 'skins', 'AURORA', true)
+  await roomsA.start(f.id, f.host, { deckCount: 1, cardsPerPlayer: 3, randomDeckCount: true })
+  const cold = await new Rooms(second).view(f.id, f.host)
+  assert.equal(cold.gameType, 'LIARS_DECK_4FUN_PLUS')
+  assert.equal(cold.game!.hand.filter(card => card.rank === 'SPELL').length, 1)
+  assert.equal(cold.players.find(player => player.id === f.host.id)!.balance, 250)
+  const s = await state(f.id)
+  assert.equal(s.type, 'LIARS_DECK_4FUN_PLUS')
+  assert.equal([...Object.values(s.hands).flat(), ...s.reserve].filter(card => card.rank === 'JOKER').length, s.deckCount * 2)
+  s.order = [f.host.id, guest.id]
+  s.currentIndex = s.initializerIndex = 0
+  s.hands[f.host.id] = [{ id: randomUUID(), rank: 'SPELL', suit: 'SPADES' }]
+  await first.query('UPDATE rooms SET game_state=$2::jsonb WHERE id=$1', [f.id, JSON.stringify(s)])
+  await roomsA.command(f.host, { roomId: f.id, action: 'PLAY', cardIds: [s.hands[f.host.id][0].id], declaredRank: 'A' })
+  await roomsB.command(guest, { roomId: f.id, action: 'CHALLENGE' })
+  const challenge = (await state(f.id)).spelling!
+  for (const actor of [f.host, guest]) await roomsA.command(actor, {
+    roomId: f.id, action: 'SPELL_ANSWER', spellingId: challenge.id, answer: challenge.questions[actor.id].text,
+  })
+  const won = await roomsB.view(f.id, f.host)
+  assert.equal(won.game!.winnerId, f.host.id)
+  assert.equal(won.records.find(record => record.playerId === f.host.id)!.wins, 1)
+  for (const id of originals) {
+    const view = await roomsB.view(id, f.host)
+    assert.equal(view.game, null)
+    assert.equal(view.players.find(player => player.id === f.host.id)!.balance, 0)
+    assert.equal(view.skins.find(skin => skin.id === 'AURORA')!.owned, false)
+    assert.equal(view.records.find(record => record.playerId === f.host.id)!.wins, 0)
+  }
+})
+
 test('parallel purchases never overdraw a room wallet, and ownership is per player', async () => {
   const f = await setup()
   await first.query(
@@ -651,6 +693,19 @@ test('WebSocket peers on separate server instances see the same game and survive
     const actor =
         firstView.payload.game.currentPlayerId === host.actor.id ? one : two,
       view = actor === one ? firstView : secondView
+    const buyerId = view.payload.game.currentPlayerId
+    await first.query('UPDATE room_memberships SET balance=100 WHERE room_id=$1 AND player_id=$2', [room.id, buyerId])
+    const tomatoRequest = randomUUID()
+    const tomato = JSON.stringify({ type: 'GAME_COMMAND', payload: {
+      roomId: room.id, gameId: view.payload.game.gameId, requestId: tomatoRequest,
+      action: 'THROW', item: 'TOMATO', targetId: buyerId === host.actor.id ? guest.actor.id : host.actor.id,
+    } })
+    actor.ws.send(tomato)
+    actor.ws.send(tomato)
+    await actor.wait(event => event.type === 'THROW_CONFIRMED' && event.payload.requestId === tomatoRequest)
+    const charged = await roomsA.view(room.id, buyerId === host.actor.id ? host.actor : guest.actor)
+    assert.equal(charged.players.find(player => player.id === buyerId)!.balance, 0)
+    assert.equal(charged.game!.throws!.length, 1)
     actor.ws.send(
       JSON.stringify({
         type: 'GAME_COMMAND',
@@ -694,3 +749,66 @@ test('WebSocket peers on separate server instances see the same game and survive
     )
   }
 })
+
+test('throw purchase is charged once across instances, uses earnings first, and stop restores pre-deal wallets', async () => {
+  const f = await setup()
+  await first.query('UPDATE room_memberships SET balance=500 WHERE room_id=$1', [f.id])
+  await roomsA.start(f.id, f.host, { deckCount: 1, cardsPerPlayer: 3 })
+  const s = await state(f.id), target = f.players.find(player => player.actor.id !== f.host.id)!.actor
+  s.earnings[f.host.id] = 220
+  await first.query('UPDATE rooms SET game_state=$2::jsonb WHERE id=$1', [f.id, JSON.stringify(s)])
+  await first.query('UPDATE room_memberships SET balance=720 WHERE room_id=$1 AND player_id=$2', [f.id, f.host.id])
+  const funded = await roomsB.view(f.id, f.host)
+  assert.equal(funded.players.find(player => player.id === f.host.id)!.balance, 720)
+  assert.equal(funded.game!.earnings.find(player => player.playerId === f.host.id)!.amount, 220)
+  const command = { roomId: f.id, gameId: s.gameId, requestId: randomUUID(), action: 'THROW' as const, item: 'COFFEE' as const, targetId: target.id }
+  await Promise.all([roomsA.command(f.host, command), roomsB.command(f.host, command)])
+  const purchased = await roomsB.view(f.id, f.host)
+  assert.equal(purchased.players.find(player => player.id === f.host.id)!.balance, 420)
+  assert.equal(purchased.game!.throws!.length, 1)
+  assert.equal(purchased.game!.throws![0].fromEarnings, 220)
+  assert.equal(purchased.game!.throws![0].fromWallet, 80)
+  await assert.rejects(() => roomsA.command(f.host, { ...command, gameId: randomUUID(), requestId: randomUUID() }), /deal changed/)
+  await assert.rejects(() => roomsA.command(f.host, { ...command, item: 'AIRPLANE', requestId: randomUUID() }), /Not enough coins/)
+  assert.equal((await roomsA.view(f.id, target)).game!.throws!.length, 1)
+  const tomato = { ...command, item: 'TOMATO' as const, requestId: randomUUID() }
+  await Promise.all([roomsA.command(f.host, tomato), roomsB.command(f.host, tomato)])
+  const afterTomato = await roomsB.view(f.id, f.host)
+  assert.equal(afterTomato.players.find(player => player.id === f.host.id)!.balance, 320)
+  assert.equal(afterTomato.game!.throws!.length, 2)
+  assert.equal(afterTomato.game!.throws![1].cost, 100)
+  await roomsA.stop(f.id, f.host, s.gameId)
+  const stopped = await roomsB.view(f.id, f.host)
+  assert.ok(stopped.players.every(player => player.balance === 500))
+  assert.equal(stopped.game, null)
+})
+
+for (const type of ['LIARS_DECK', 'LIARS_DECK_PLUS', 'LIARS_DECK_4_FUN', 'LIARS_DECK_4FUN_PLUS'] as const) {
+  test(`${type}: continuous purchases across instances charge 100 per receipt and ignore pending coins`, async () => {
+    const f = await setup(type)
+    await first.query('UPDATE room_memberships SET balance=1000 WHERE room_id=$1', [f.id])
+    await roomsA.start(f.id, f.host, { deckCount: 1, cardsPerPlayer: 3 })
+    const s = await state(f.id), target = f.players.find(player => player.actor.id !== f.host.id)!.actor
+    s.earnings[f.host.id] = 250
+    s.pendingClaim = { playerId: f.host.id, cards: [], cardCount: 1, generation: 1, risk: 5000 }
+    await first.query('UPDATE rooms SET game_state=$2::jsonb WHERE id=$1', [f.id, JSON.stringify(s)])
+    await first.query('UPDATE room_memberships SET balance=1250 WHERE room_id=$1 AND player_id=$2', [f.id, f.host.id])
+    const commands = Array.from({ length: 8 }, () => ({
+      roomId: f.id, gameId: s.gameId, requestId: randomUUID(), action: 'THROW' as const, item: 'TOMATO' as const, targetId: target.id,
+    }))
+    const send = () => Promise.all(commands.map((command, index) => (index % 2 ? roomsA : roomsB).command(f.host, command)))
+    await send()
+    await send() // Replay every receipt; none may charge again.
+    const view = await roomsA.view(f.id, f.host)
+    assert.equal(view.players.find(player => player.id === f.host.id)!.balance, 450)
+    assert.equal(view.game!.throws!.length, 8)
+    assert.ok(view.game!.throws!.every(event => event.cost === 100))
+    assert.deepEqual(view.game!.throwSpending!.find(player => player.playerId === f.host.id), { playerId: f.host.id, amount: 800, fromEarnings: 250 })
+    const stored = await first.query('SELECT balance FROM room_memberships WHERE room_id=$1 AND player_id=$2', [f.id, f.host.id])
+    assert.equal(Number(stored.rows[0].balance), 450)
+    for (let index = 0; index < 4; index++) await roomsB.command(f.host, { ...commands[0], requestId: randomUUID() })
+    await assert.rejects(() => roomsA.command(f.host, { ...commands[0], requestId: randomUUID() }), /Not enough coins/)
+    assert.equal((await roomsB.view(f.id, f.host)).players.find(player => player.id === f.host.id)!.balance, 50)
+    await roomsA.stop(f.id, f.host, s.gameId)
+  })
+}

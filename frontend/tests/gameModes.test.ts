@@ -39,7 +39,15 @@ describe('Plus truthful rank hints match the server rules', () => {
     expect(gameModes.LIARS_DECK_4_FUN.randomDecks).toBe(false)
     expect(gameModes.LIARS_DECK.randomDecks).toBe(false)
     expect(gameModes.LIARS_DECK_PLUS.randomDecks).toBe(true)
-    expect(gameModes.LIARS_DECK_4_FUN.ruleHint).toBe('spelling')
-    expect(gameModes.LIARS_DECK_PLUS.ruleHint).toBe('plus')
+    expect(gameModes.LIARS_DECK_4_FUN.ruleHints).toEqual(['spelling'])
+    expect(gameModes.LIARS_DECK_PLUS.ruleHints).toEqual(['plus'])
+  })
+
+  it('combines setup and wildcard hints only for 4 Fun Plus', () => {
+    expect(gameModes.LIARS_DECK_4FUN_PLUS).toMatchObject({ cardsPerDeck: 54, randomDecks: true, ruleHints: ['plus', 'spelling'] })
+    expect(truthfulPlusRanks(cards('SPELL JOKER'), true)).toHaveLength(13)
+    expect(truthfulPlusRanks(cards('A 2 SPELL JOKER'), true)).toEqual(['A', '2', '3', '4'])
+    expect(truthfulPlusRanks(cards('A 2 SPELL JOKER'))).toEqual([])
+    expect(truthfulPlusRanks(cards('Q K A 2'), true)).toEqual([])
   })
 })

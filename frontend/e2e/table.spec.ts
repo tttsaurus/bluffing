@@ -39,7 +39,7 @@ test('persistent identity supports duplicate names and nickname edits', async ({
   expect((await identity(page)).token).toBe(first.token)
 })
 
-for (const gameType of ['LIARS_DECK', 'LIARS_DECK_PLUS', 'LIARS_DECK_4_FUN'] as const) {
+for (const gameType of ['LIARS_DECK', 'LIARS_DECK_PLUS', 'LIARS_DECK_4_FUN', 'LIARS_DECK_4FUN_PLUS'] as const) {
 test(`two browsers create, join, play, truth-check privately and stop ${gameType}`, async ({ page, browser }) => {
   const host = await enter(page, 'CI dealer')
   const roomName = `CI ${gameType === 'LIARS_DECK_PLUS' ? 'Plus' : 'Classic'} ${Date.now()}`

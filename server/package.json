@@ -5,7 +5,7 @@
   "scripts": {
     "build": "tsc --noEmit && node --import tsx src/game/words.ts && esbuild src/local.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/local.js",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx tests/engine.test.ts && node --import tsx tests/identity.test.ts && node --import tsx tests/config.test.ts && node --import tsx tests/audio.test.ts"
+    "test": "node --import tsx tests/engine.test.ts && node --import tsx tests/throwables.test.ts && node --import tsx tests/identity.test.ts && node --import tsx tests/config.test.ts && node --import tsx tests/audio.test.ts"
   },
   "dependencies": {
     "pg": "^8.16.0",

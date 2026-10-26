@@ -3,8 +3,8 @@ import type { SkinId } from './types'
 import { createCardArtRenderer, paintStillCardArt } from './cardArt'
 
 /** Original procedural card art; flying cards reuse a cached raster of this artwork. */
-export function CardBack({ skin, compact = false, surface = false, still = false }: {
-  skin: SkinId; compact?: boolean; surface?: boolean; still?: boolean
+export function CardBack({ skin, compact = false, still = false }: {
+  skin: SkinId; compact?: boolean; still?: boolean
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [revision, setRevision] = useState(0)
@@ -32,9 +32,8 @@ export function CardBack({ skin, compact = false, surface = false, still = false
     const resume = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(draw) }
     redraw.current = resume
     const resizeCanvas = () => {
-      // Only read layout on resize, never during an animation frame. The broad
-      // felt texture needs fewer pixels than the detailed cards in front of it.
-      const ratio = surface ? Math.min(.75, 960 / Math.max(1, canvas.clientWidth)) : Math.min(devicePixelRatio || 1, 2)
+      // Only read layout on resize, never during an animation frame.
+      const ratio = Math.min(devicePixelRatio || 1, 2)
       const width = Math.max(1, Math.round(canvas.clientWidth * ratio))
       const height = Math.max(1, Math.round(canvas.clientHeight * ratio))
       if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height }
@@ -63,10 +62,10 @@ export function CardBack({ skin, compact = false, surface = false, still = false
       canvas.removeEventListener('webglcontextrestored', restored)
       renderer.dispose()
     }
-  }, [revision, surface, still])
-  return <div className={`skin-card skin-${skin.toLowerCase()} ${compact ? 'compact-back' : ''} ${surface ? 'shader-surface' : ''}`} aria-hidden={surface || undefined} aria-label={surface ? undefined : `${skin.toLowerCase()} card back`}>
+  }, [revision, still])
+  return <div className={`skin-card skin-${skin.toLowerCase()} ${compact ? 'compact-back' : ''}`} aria-label={`${skin.toLowerCase()} card back`}>
     <canvas ref={canvasRef} aria-hidden="true" />
-    {!surface && <div className="skin-engraving" aria-hidden="true"><span>✦</span><b>♠</b><span>✦</span></div>}
-    {!compact && !surface && <span className="skin-signature" aria-hidden="true">BLUFF / {skin === 'CLASSIC' ? 'HOUSE' : skin}</span>}
+    <div className="skin-engraving" aria-hidden="true"><span>✦</span><b>♠</b><span>✦</span></div>
+    {!compact && <span className="skin-signature" aria-hidden="true">BLUFF / {skin === 'CLASSIC' ? 'HOUSE' : skin}</span>}
   </div>
 }

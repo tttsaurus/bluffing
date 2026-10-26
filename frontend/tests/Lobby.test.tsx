@@ -16,6 +16,7 @@ it('exposes a correctly labelled room-type dropdown and submits the selected gam
     createRoom, loadRooms: vi.fn().mockResolvedValue(undefined), loading: false, error: null })
   render(<App />)
   const dropdown = screen.getByRole('combobox', { name: 'ROOM TYPE' })
+  expect(screen.getByRole('option', { name: "Liar's Deck 4 Fun Plus" })).toBeTruthy()
   await userEvent.selectOptions(dropdown, 'LIARS_DECK_PLUS')
   const name = screen.getByRole('textbox', { name: 'ROOM NAME' })
   await userEvent.clear(name)
@@ -78,7 +79,7 @@ it('lets the host deal with two present players and validates custom hands again
   expect(screen.getByRole('button', { name: /Need 2 players here/ }).hasAttribute('disabled')).toBe(true)
 })
 
-it.each<GameType>(['LIARS_DECK', 'LIARS_DECK_PLUS', 'LIARS_DECK_4_FUN'])('%s reuses classic game setup and the deck/avatar shop', async gameType => {
+it.each<GameType>(['LIARS_DECK', 'LIARS_DECK_PLUS', 'LIARS_DECK_4_FUN', 'LIARS_DECK_4FUN_PLUS'])('%s reuses classic game setup and the deck/avatar shop', async gameType => {
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
   const view = waitingRoom()
   view.gameType = gameType
@@ -89,7 +90,7 @@ it.each<GameType>(['LIARS_DECK', 'LIARS_DECK_PLUS', 'LIARS_DECK_4_FUN'])('%s reu
   expect(screen.getByRole('button', { name: /Deal the cards/ })).toBeTruthy()
   expect(screen.getByText('House deck')).toBeTruthy()
   expect(screen.getByRole('button', { name: 'Avatars' })).toBeTruthy()
-  expect(Boolean(screen.queryByRole('checkbox', { name: /Random decks/ }))).toBe(gameType === 'LIARS_DECK_PLUS')
+  expect(Boolean(screen.queryByRole('checkbox', { name: /Random decks/ }))).toBe(gameType === 'LIARS_DECK_PLUS' || gameType === 'LIARS_DECK_4FUN_PLUS')
 })
 
 it('Plus random decks use the participating count, not the number of durable seats', async () => {

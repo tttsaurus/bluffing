@@ -1,9 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { freshOutcomes, gameWallet, outcomeCopy, rankRecords, shouldNotifyOutcome, tableSkins, turnOrder } from '../src/presentation'
+import { freshOutcomes, gameWallet, walletBalances, outcomeCopy, rankRecords, shouldNotifyOutcome, tableSkins, turnOrder } from '../src/presentation'
 import { game, other, outcome, room, self } from './fixtures'
 import type { GameOutcome } from '../src/types'
 
 describe('wallet isolation and receipts', () => {
+  it.each([200, 50, 0])('one tomato lowers the total exactly 100 with %s earned coins', earned => {
+    const view = game({ earnings: [{ playerId: self.id, amount: earned }],
+      pendingClaim: { playerId: self.id, cardCount: 20, generation: 5, risk: 5000 } })
+    const before = walletBalances(view, self.id, 500 + earned)
+    const fromEarnings = Math.min(100, earned)
+    const after = walletBalances({ ...view, throwSpending: [{ playerId: self.id, amount: 100, fromEarnings }] }, self.id, 400 + earned)
+    expect(before).toEqual({ earned, pending: 5000, room: 500, available: 500 + earned })
+    expect(before.available - after.available).toBe(100)
+    expect(after.room + after.earned).toBe(after.available)
+    expect(after.earned).toBe(earned - fromEarnings)
+  })
   it('separates confirmed earnings from an unresolved claim and other wallets', () => {
     const view = game({ earnings: [{ playerId: self.id, amount: 60 }, { playerId: other.id, amount: 900 }],
       pendingClaim: { playerId: self.id, cardCount: 2, generation: 3, risk: 60 } })

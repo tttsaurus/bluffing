@@ -4,6 +4,7 @@ import type {
   GameOutcome,
   GameType,
   GameView,
+  ThrowItemId,
 } from '../../../shared/contracts.ts'
 
 export const RANKS = [
@@ -62,6 +63,8 @@ export interface GameState {
   consecutiveFolds: number
   targetRank: string | null
   earnings: Record<string, number>
+  throwSpending?: Record<string, { amount: number; fromEarnings: number }>
+  throws?: GameView['throws']
   outcomes: GameOutcome[]
   plays: NonNullable<GameView['plays']>
   actions?: GameView['actions']
@@ -79,7 +82,9 @@ export interface StartSettings {
 }
 export interface GameCommand {
   roomId: string
-  action: 'PLAY' | 'FOLD' | 'CHALLENGE' | 'SPELL_ANSWER' | 'SPELL_DRAFT'
+  action: 'PLAY' | 'FOLD' | 'CHALLENGE' | 'SPELL_ANSWER' | 'SPELL_DRAFT' | 'THROW'
+  item?: ThrowItemId
+  targetId?: string
   cardIds?: string[]
   declaredRank?: string
   spellingId?: string

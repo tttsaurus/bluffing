@@ -6,21 +6,22 @@ interface GameMode {
   name: string
   cardsPerDeck: number
   randomDecks: boolean
-  ruleHint: 'classic' | 'plus' | 'spelling'
+  ruleHints: readonly ('plus' | 'spelling')[]
 }
-const classic: GameMode = { name: "Liar's Deck", cardsPerDeck: 52, randomDecks: false, ruleHint: 'classic' }
+const classic: GameMode = { name: "Liar's Deck", cardsPerDeck: 52, randomDecks: false, ruleHints: [] }
 
 // All modes use the same shop, waiting-room setup, and table components.
 // Variants override metadata and rule hints only, never copy the whole UI.
 export const gameModes: Record<GameType, GameMode> = {
   LIARS_DECK: classic,
-  LIARS_DECK_PLUS: { ...classic, name: "Liar's Deck Plus", cardsPerDeck: 54, randomDecks: true, ruleHint: 'plus' },
-  LIARS_DECK_4_FUN: { ...classic, name: "Liar's Deck 4 Fun", ruleHint: 'spelling' },
+  LIARS_DECK_PLUS: { ...classic, name: "Liar's Deck Plus", cardsPerDeck: 54, randomDecks: true, ruleHints: ['plus'] },
+  LIARS_DECK_4_FUN: { ...classic, name: "Liar's Deck 4 Fun", ruleHints: ['spelling'] },
+  LIARS_DECK_4FUN_PLUS: { ...classic, name: "Liar's Deck 4 Fun Plus", cardsPerDeck: 54, randomDecks: true, ruleHints: ['plus', 'spelling'] },
 }
 
-export function straightClaimRanks(cards: Card[]) {
+export function straightClaimRanks(cards: Card[], spellWild = false) {
   if (cards.length !== 4) return []
-  const natural = cards.filter(card => card.rank !== 'JOKER').map(card => card.rank)
+  const natural = cards.filter(card => card.rank !== 'JOKER' && !(spellWild && card.rank === 'SPELL')).map(card => card.rank)
   if (new Set(natural).size !== natural.length) return []
   const windows = ranks.slice(0, 10).map((_, index) => ranks.slice(index, index + 4))
   windows.push(['J', 'Q', 'K', 'A'])
@@ -28,8 +29,8 @@ export function straightClaimRanks(cards: Card[]) {
   return ranks.filter(rank => allowed.includes(rank))
 }
 
-export function truthfulPlusRanks(cards: Card[]) {
+export function truthfulPlusRanks(cards: Card[], spellWild = false) {
   if (!cards.length) return []
-  const straight = straightClaimRanks(cards)
-  return ranks.filter(rank => straight.includes(rank) || cards.every(card => card.rank === 'JOKER' || card.rank === rank))
+  const straight = straightClaimRanks(cards, spellWild)
+  return ranks.filter(rank => straight.includes(rank) || cards.every(card => card.rank === 'JOKER' || (spellWild && card.rank === 'SPELL') || card.rank === rank))
 }

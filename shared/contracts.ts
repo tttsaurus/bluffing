@@ -1,4 +1,4 @@
-export type GameType = 'LIARS_DECK' | 'LIARS_DECK_PLUS' | 'LIARS_DECK_4_FUN'
+export type GameType = 'LIARS_DECK' | 'LIARS_DECK_PLUS' | 'LIARS_DECK_4_FUN' | 'LIARS_DECK_4FUN_PLUS'
 export type RoomStatus = 'LOBBY' | 'IN_GAME'
 export type Suit = 'SPADES' | 'HEARTS' | 'DIAMONDS' | 'CLUBS' | 'JOKER'
 
@@ -20,6 +20,7 @@ export interface Member {
   displayName: string
   identityTag: string
   seatIndex: number
+  /** Total spendable coins, including unspent confirmed game earnings. */
   balance: number
   host: boolean
   presence: 'ACTIVE' | 'AWAY' | 'OFFLINE'
@@ -68,6 +69,8 @@ export interface SpellingView {
   }[]
 }
 export interface GameView {
+  throws?: ThrowEvent[]
+  throwSpending?: { playerId: string; amount: number; fromEarnings: number }[]
   /** Ordered public actions. Card faces stay in the viewer-filtered plays list. */
   actions?: TableAction[]
   spelling?: SpellingView | null
@@ -100,6 +103,16 @@ export interface GameView {
     revealedCards: Card[]
   }[]
   outcomes: GameOutcome[]
+}
+export type ThrowItemId = 'TOMATO' | 'AIRPLANE' | 'COFFEE'
+export interface ThrowEvent {
+  id: number
+  playerId: string
+  targetId: string
+  item: ThrowItemId
+  cost: number
+  fromEarnings: number
+  fromWallet: number
 }
 export interface TableAction {
   id: number

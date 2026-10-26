@@ -119,6 +119,7 @@ input::placeholder { color: #a0aaa4; }
 .room-top, .room-meta, .room-actions { display: flex; justify-content: space-between; align-items: center; }
 .game-tag { display:inline-flex; align-items:center; min-height:29px; padding:5px 10px; border:1px solid #94ac9a; border-radius:4px; color:#204e3a; background:#dcebdc; font-size:12px; font-weight:950; letter-spacing:.11em; box-shadow:0 2px 0 #204e3a1a; }
 .room-liars_deck_plus .game-tag,.room-type-liars_deck_plus { color:#4f2b70; background:#f0dfff; border-color:#ad85c9; }
+.room-liars_deck_4fun_plus .game-tag,.room-type-liars_deck_4fun_plus { color:#6c2447; background:#ffe4ed; border-color:#c685a1; }
 .room-liars_deck_4_fun .game-tag,.room-type-liars_deck_4_fun { color:#76243b; background:#ffe0e7; border-color:#d78a9d; }
 .room-liars_deck .game-tag,.room-type-liars_deck { color:#204e3a; background:#dcebdc; border-color:#94ac9a; }
 .room-emblem { position: absolute; right: -12px; top: 28px; font-family: Georgia, serif; font-size: 145px; color: rgba(9,42,33,.045); transform: rotate(8deg); }
@@ -419,23 +420,13 @@ input::placeholder { color: #a0aaa4; }
 .record-leader .record-score { font-size: 48px; }.record-leader .record-name strong { font-size: 19px; }.record-leader .record-rank { color: var(--record-color); font-size: 23px; }
 .your-record .record-name strong { color: #fff6ce; }.record-empty { padding: 28px 0 10px; color: #c2d1bf; font-size: 16px; }
 
-/* The current player's edition owns the stage; the last claimant owns the pool's card backs. */
-.felt { --edition-color:#e5bf71; min-height: 430px; overflow: hidden; }
-.turn-skin-aurora { --edition-color:#88ffe2; }.turn-skin-supernova { --edition-color:#ffb07b; }.turn-skin-prism { --edition-color:#d7b0ff; }
-.turn-aura { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; pointer-events: none; opacity: .72; animation: edition-arrival .7s ease-out; }
-.felt:not(.turn-skin-classic) { border-color: color-mix(in srgb,var(--edition-color) 58%,#352841); box-shadow: inset 0 0 0 2px var(--edition-color), inset 0 0 45px #0006, 0 0 35px color-mix(in srgb,var(--edition-color) 25%,transparent); }
-.turn-skin-classic .turn-aura { opacity: .2; }
-.turn-aura .shader-surface { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; border-radius: inherit; transform: none; box-shadow: none; }
-.turn-aura::after { content:''; position:absolute; inset:0; background:radial-gradient(ellipse,transparent 0%,#062b2580 65%,#042c28 100%); }
-.aura-rings { position:absolute; inset:14%; border:1px solid var(--edition-color); border-radius:50%; box-shadow:0 0 25px var(--edition-color),inset 0 0 20px var(--edition-color); opacity:.26; animation:edition-orbit 8s linear infinite; }
-.aura-rings::after { content:'✦'; position:absolute; top:0; left:15%; color:var(--edition-color); font-size:32px; text-shadow:0 0 16px currentColor; }
+/* Editions apply to card backs; the felt keeps its house colors. */
+.felt { min-height: 430px; overflow: hidden; }
 .felt .pool { margin-top:25px; text-shadow:0 2px 6px #001b16; }
 .felt .card-stack, .felt .compact-back { width:108px; height:152px; }
-.felt .pool-preview { opacity:1; filter:drop-shadow(0 0 20px var(--edition-color)); }
+.felt .pool-preview { opacity:1; filter:drop-shadow(0 0 20px #e5bf71); }
 .felt .pool strong { font-size:26px; }
 .pool-skin-aurora { filter:drop-shadow(0 0 18px #6ef6cbaa); }.pool-skin-supernova { filter:drop-shadow(0 0 18px #ff813daa); }.pool-skin-prism { filter:drop-shadow(0 0 18px #b284ffaa); }
-@keyframes edition-arrival { from { opacity:0; transform:scale(1.1); } to { transform:scale(1); } }
-@keyframes edition-orbit { to { transform:rotate(360deg); } }
 .opponents { justify-content: safe center; }
 .dialog-surface { border: 0; padding: 0; background: transparent; color: inherit; width: min(470px,calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); }
 .dialog-surface::backdrop { background: #03140fc2; backdrop-filter: blur(8px); }
@@ -637,6 +628,28 @@ input::placeholder { color: #a0aaa4; }
 
 /* The avatar-based table is the sole active-game layout. */
 .game.battle-page { min-height:100vh; overflow-x:clip; }
+.game.battle-page:has(.throw-dock) { padding-bottom:82px; }
+html:has(.throw-dock) { scroll-padding-bottom:82px; }
+.game.battle-page:has(.throw-dock) .cards { scroll-margin-bottom:82px; }
+.throw-dock { position:fixed; z-index:45; left:50%; bottom:max(12px,env(safe-area-inset-bottom)); translate:-50% 0; width:min(570px,calc(100vw - 24px)); border:1px solid #ecc9859c; border-radius:16px; color:#f8e9c8; background:linear-gradient(130deg,#12392ff5,#071e1dfc); box-shadow:0 14px 50px #0009,0 0 20px #f1bd5e18; overflow:hidden; }
+.throw-dock-toggle { display:flex; align-items:center; gap:12px; width:100%; min-height:48px; padding:10px 16px; border:0; color:inherit; background:transparent; cursor:pointer; text-align:left; }
+.throw-dock-toggle > strong { font-size:12px; letter-spacing:.15em; }.throw-dock-emblem { display:grid; place-items:center; width:28px; height:28px; border:1px solid #ffd68c70; border-radius:9px; color:#ffd68c; background:#d6a84916; font-size:23px; }
+.throw-dock-balance { margin-left:auto; color:#ffe19b; font-size:17px; font-weight:850; font-variant-numeric:tabular-nums; }.throw-dock i { font-size:.7em; font-style:normal; }.throw-dock-chevron { color:#d7c394; font-size:23px; line-height:1; }
+.throw-dock-toggle:hover { background:#ffffff08; }.throw-dock-toggle:focus-visible,.throw-buy:focus-visible { outline:2px solid #fff0ba; outline-offset:-4px; }
+.throw-dock-panel { padding:0 16px 12px; border-top:1px solid #e0c78629; }.throw-dock-panel[hidden] { display:none; }
+.throw-target-row { display:flex; align-items:center; gap:14px; padding:12px 0; }.throw-target-row label { display:flex; align-items:center; gap:8px; margin:0; color:#e7cb91; font-size:10px; letter-spacing:.1em; font-weight:850; flex-shrink:0; }
+.throw-target-row select { width:190px; max-width:50vw; margin:0; padding:8px; border:1px solid #b6d2bb4d; border-radius:6px; color:#f6e7c5; background:#173c32; font:600 12px system-ui; letter-spacing:0; }.throw-target-row > span { color:#acbfb0; font-size:11px; line-height:1.4; }
+.throw-item-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px; }
+.throw-buy { --throw-color:#ff886b; position:relative; display:grid; grid-template-columns:auto 1fr; align-items:center; column-gap:9px; padding:11px; overflow:hidden; border:1px solid color-mix(in srgb,var(--throw-color) 65%,transparent); border-radius:11px; color:#fff3d8; background:radial-gradient(ellipse at top left,color-mix(in srgb,var(--throw-color) 20%,transparent),#0b2520 80%); text-align:left; cursor:pointer; transition:transform .15s,border-color .15s; }
+.throw-buy-airplane { --throw-color:#89e8ff; }.throw-buy-coffee { --throw-color:#ffc571; }.throw-buy:hover:not(:disabled) { transform:translateY(-3px); border-color:var(--throw-color); box-shadow:0 5px 16px color-mix(in srgb,var(--throw-color) 20%,transparent); }
+.throw-buy:disabled { opacity:.42; cursor:not-allowed; }.throw-item-icon { grid-row:1 / 3; font-size:30px; filter:drop-shadow(0 0 7px color-mix(in srgb,var(--throw-color) 50%,transparent)); }.throw-buy > strong { font-size:12px; }.throw-item-price { margin-top:3px; color:var(--throw-color); font-size:14px; font-weight:850; }
+.throw-payment-note { margin:10px 0 0; color:#aabeb0; font-size:10px; line-height:1.4; }.throw-payment-note b { color:#e6d6a9; }.throw-purchase-error { margin:8px 0 0; color:#ffb09b; font-size:12px; }
+.throw-effects { position:fixed; inset:0; z-index:50; pointer-events:none; visibility:hidden; }.throw-effects.active { visibility:visible; }.throw-effects > canvas { display:block; width:100%; height:100%; }
+@media(max-width:600px) {
+  .throw-dock { width:calc(100vw - 16px); bottom:max(8px,env(safe-area-inset-bottom)); border-radius:13px; }.throw-dock-toggle { padding:8px 12px; gap:9px; min-height:46px; }.throw-dock-panel { padding:0 10px 10px; }
+  .throw-target-row { flex-wrap:wrap; gap:5px; padding:9px 0; }.throw-target-row label { flex:1; }.throw-target-row select { flex:1; max-width:none; width:0; }.throw-target-row > span { flex-basis:100%; font-size:10px; }
+  .throw-item-grid { gap:6px; }.throw-buy { padding:9px 6px; gap:5px; }.throw-item-icon { font-size:24px; }.throw-buy > strong { font-size:11px; }.throw-item-price { font-size:13px; }.throw-payment-note { font-size:9px; }
+}
 .game.battle-page > .table-header { position:absolute; z-index:25; top:14px; left:18px; height:auto; margin:0; border:0; }
 .game.battle-page > .table-header .brand,.game.battle-page > .table-header .room-name > span { display:none; }
 .game.battle-page > .table-header { display:flex; gap:8px; }
@@ -689,7 +702,7 @@ input::placeholder { color: #a0aaa4; }
 .game.battle-page .battle-layout .felt-wrap { display:block; width:100%; }
 .game.battle-page .table-arena { position:relative; width:100%; max-width:1260px; height:clamp(430px,57vh,680px); margin:8px auto 0; }
 .game.battle-page .table-arena > .felt { position:absolute; inset:5% 5% 0; width:90%; height:92%; max-width:none; min-height:0; border-radius:50%; border-width:8px; }
-.game.battle-page .table-arena .felt-line,.game.battle-page .table-arena .turn-aura { border-radius:50%; }
+.game.battle-page .table-arena .felt-line { border-radius:50%; }
 .game.battle-page .table-arena .pool { position:absolute; top:54%; left:50%; translate:-50% -50%; padding:0; width:auto; max-width:70%; }.game.battle-page .table-arena .your-turn-anchor { bottom:15%; }
 .pool-current-rank { position:absolute; top:calc(100% + 10px); left:50%; translate:-50% 0; display:flex; align-items:center; gap:12px; padding:7px 14px; border:1px solid #e6c77f; border-radius:9px; color:#ffe6a7; background:#0a2b24f5; box-shadow:0 4px 14px #0005; white-space:nowrap; }
 .pool-current-rank > span { font-size:10px; font-weight:850; letter-spacing:.12em; }

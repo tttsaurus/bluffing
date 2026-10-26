@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { LiarsDeckEngine, LiarsDeckPlusEngine, LiarsDeck4FunEngine, engine } from '../src/game/engine.ts'
+import { LiarsDeckEngine, LiarsDeckPlusEngine, LiarsDeck4FunEngine, LiarsDeck4FunPlusEngine, engine } from '../src/game/engine.ts'
 import { RANKS, type GameState } from '../src/game/state.ts'
 import type { Card, GameType } from '../../shared/contracts.ts'
 
@@ -15,12 +15,14 @@ const card = (rank: string, suit: Card['suit'] = 'SPADES'): Card => ({
   suit,
 })
 test('each mode registers a distinct engine subclass and inherits the immutable classic shop', () => {
-  const classic = engine('LIARS_DECK'), plus = engine('LIARS_DECK_PLUS'), fun = engine('LIARS_DECK_4_FUN')
+  const classic = engine('LIARS_DECK'), plus = engine('LIARS_DECK_PLUS'), fun = engine('LIARS_DECK_4_FUN'), combined = engine('LIARS_DECK_4FUN_PLUS')
   assert.equal(classic.constructor, LiarsDeckEngine)
   assert.equal(plus.constructor, LiarsDeckPlusEngine)
   assert.equal(fun.constructor, LiarsDeck4FunEngine)
+  assert.equal(combined.constructor, LiarsDeck4FunPlusEngine)
+  assert.equal(new Set([classic, plus, fun, combined]).size, 4)
   assert.ok(plus instanceof LiarsDeckEngine && fun instanceof LiarsDeckEngine)
-  for (const rules of [plus, fun]) {
+  for (const rules of [plus, fun, combined]) {
     assert.equal(rules.catalog, classic.catalog)
     assert.equal(rules.start, classic.start)
     assert.equal(rules.command, classic.command)
@@ -79,10 +81,11 @@ for (const type of [
   'LIARS_DECK',
   'LIARS_DECK_PLUS',
   'LIARS_DECK_4_FUN',
+  'LIARS_DECK_4FUN_PLUS',
 ] as const) {
   test(`${type} rejects every other mode's state before reading or mutating it`, () => {
     const rules = engine(type)
-    for (const other of ['LIARS_DECK', 'LIARS_DECK_PLUS', 'LIARS_DECK_4_FUN'] as const) {
+    for (const other of ['LIARS_DECK', 'LIARS_DECK_PLUS', 'LIARS_DECK_4_FUN', 'LIARS_DECK_4FUN_PLUS'] as const) {
       if (other === type) continue
       const state = fixture(other).state, before = structuredClone(state)
       for (const operation of [
@@ -117,6 +120,8 @@ for (const type of [
     assert.equal(rules.view(state, b).plays!.at(-1)!.revealedCards[0].rank, '2')
   })
   test(`${type} deals unique cards, stable random seats, and its own deck composition`, () => {
+    const plus = type === 'LIARS_DECK_PLUS' || type === 'LIARS_DECK_4FUN_PLUS'
+    const spelling = type === 'LIARS_DECK_4_FUN' || type === 'LIARS_DECK_4FUN_PLUS'
     const rules = engine(type),
       state = rules.start(room, [a, b, c], {
         deckCount: 2,
@@ -124,7 +129,7 @@ for (const type of [
       })
     assert.equal(
       state.cardsPerPlayer,
-      Math.floor((type === 'LIARS_DECK_PLUS' ? 108 : 104) / 3)
+      Math.floor((plus ? 108 : 104) / 3)
     )
     assert.deepEqual(new Set(state.order), new Set([a, b, c]))
     assert.equal(new Set(state.order).size, 3)
@@ -132,16 +137,16 @@ for (const type of [
     assert.equal(new Set(cards.map((c) => c.id)).size, cards.length)
     assert.equal(
       cards.filter((c) => c.rank === 'JOKER').length,
-      type === 'LIARS_DECK_PLUS' ? 4 : 0
+      plus ? 4 : 0
     )
     assert.equal(
       cards.filter((c) => c.rank === 'SPELL').length,
-      type === 'LIARS_DECK_4_FUN' ? 3 : 0
+      spelling ? 3 : 0
     )
     for (const hand of Object.values(state.hands))
       assert.equal(
         hand.length,
-        state.cardsPerPlayer + (type === 'LIARS_DECK_4_FUN' ? 1 : 0)
+        state.cardsPerPlayer + (spelling ? 1 : 0)
       )
   })
 }
@@ -360,50 +365,97 @@ test('departing with three players restores unverified empty hand and continues 
   assert.equal(state.pendingClaim, null)
   assert.equal(state.earnings[a], undefined)
 })
-function spell() {
-  const f = fixture('LIARS_DECK_4_FUN')
+function spell(type: GameType = 'LIARS_DECK_4_FUN') {
+  const f = fixture(type)
   f.state.hands[a] = [card('SPELL'), card('2')]
   play(f.state, a)
   challenge(f.state, b)
   return f
 }
-test('a checked lone SPELL opens the same timed challenge for everyone without exposing the word', () => {
-  const { state, rules } = spell()
-  assert.equal(state.spelling?.stage, 'ACTIVE')
-  assert.equal(state.spelling?.deadline, 16000)
-  const first = rules.view(state, a, 1000).spelling!,
-    second = rules.view(state, b, 1000).spelling!
-  assert.equal(first.audioUrl, second.audioUrl)
-  assert.equal(first.playerCount, 2)
-  assert.equal(first.results.length, 0)
-  assert.equal(rules.view(state, c).spelling!.audioUrl, null)
-  assert.throws(() => fold(state, a))
+
+test('4 Fun Plus combines both wildcards and Plus straights without changing either original engine', () => {
+  const combined = engine('LIARS_DECK_4FUN_PLUS')
+  for (const [ranks, rank, expected] of [
+    [['SPELL', 'JOKER'], 'K', true],
+    [['SPELL', 'JOKER', '2', '3'], 'A', true],
+    [['SPELL', 'JOKER', '2', '3'], 'K', false],
+    [['J', 'Q', 'SPELL', 'JOKER'], 'A', true],
+    [['Q', 'K', 'A', '2'], 'A', false],
+    [['A', 'A', 'SPELL', 'JOKER'], '2', false],
+  ] as const) {
+    const cards = ranks.map(rank => card(rank)), before = structuredClone(cards)
+    assert.equal(combined.isTruthful(cards, rank), expected)
+    assert.deepEqual(cards, before)
+  }
+  assert.equal(engine('LIARS_DECK_PLUS').isTruthful([card('SPELL')], 'A'), false)
+  assert.equal(engine('LIARS_DECK_4_FUN').isTruthful([card('JOKER')], 'A'), false)
+  assert.equal(engine('LIARS_DECK_4_FUN').isTruthful(['A', '2', '3', '4'].map(rank => card(rank)), 'A'), false)
 })
-test('mixed SPELL is a wildcard, but never starts a spelling challenge', () => {
-  const { state } = fixture('LIARS_DECK_4_FUN')
-  state.hands[a] = [card('SPELL'), card('A'), card('2')]
-  play(state, a, 'A', state.hands[a].slice(0, 2))
+
+test('4 Fun Plus random decks retain two jokers per deck and one extra SPELL per player', () => {
+  const rules = engine('LIARS_DECK_4FUN_PLUS')
+  for (let index = 0; index < 20; index++) {
+    const state = rules.start(room, [a, b, c], { deckCount: 1, cardsPerPlayer: null, randomDeckCount: true })
+    assert.ok(state.deckCount >= 1 && state.deckCount <= 3)
+    const cards = [...Object.values(state.hands).flat(), ...state.reserve]
+    assert.equal(cards.length, state.deckCount * 54 + 3)
+    assert.equal(cards.filter(card => card.rank === 'JOKER').length, state.deckCount * 2)
+    for (const hand of Object.values(state.hands)) assert.equal(hand.filter(card => card.rank === 'SPELL').length, 1)
+  }
+  assert.throws(() => rules.start(room, [a, b], { deckCount: 1, cardsPerPlayer: 28, randomDeckCount: true }), /fit in one deck/)
+})
+
+test('a lone joker in 4 Fun Plus never triggers spelling', () => {
+  const { state } = fixture('LIARS_DECK_4FUN_PLUS')
+  state.hands[a] = [card('JOKER'), card('2')]
+  play(state, a)
   challenge(state, b)
   assert.equal(state.spelling, null)
-  assert.equal(state.earnings[a], 40)
+  assert.equal(state.earnings[a], 20)
 })
-test('spelling correct/wrong answers settle once with exact pool-size penalties', () => {
-  const { state, rules } = spell(),
-    round = state.spelling!,
-    beforeA = state.hands[a].length,
-    beforeB = state.hands[b].length
-  rules.command(
-    state,
-    a,
-    {
-      roomId: room,
-      action: 'SPELL_ANSWER',
-      spellingId: round.id,
-      answer: round.questions[a].text,
-    },
-    2000
-  )
-  assert.throws(() =>
+
+test('4 Fun Plus spelling penalties refill from its Plus deck', () => {
+  const { state, rules } = spell('LIARS_DECK_4FUN_PLUS')
+  const round = state.spelling!, beforeB = state.hands[b].length
+  state.reserve = []
+  for (const player of [a, b]) rules.command(state, player, {
+    roomId: room, action: 'SPELL_ANSWER', spellingId: round.id,
+    answer: player === a ? round.questions[player].text : 'wrong',
+  }, 2000)
+  const supply = [...state.reserve, ...Object.values(state.hands).flat()]
+  assert.equal(state.spelling?.stage, 'COMPLETE')
+  assert.equal(state.hands[b].length, beforeB + round.penalty)
+  assert.equal(state.reserve.length, 54 - round.penalty)
+  assert.equal(supply.filter(card => card.rank === 'JOKER').length, 2)
+  assert.equal(new Set(supply.map(card => card.id)).size, supply.length)
+})
+
+for (const spellingType of ['LIARS_DECK_4_FUN', 'LIARS_DECK_4FUN_PLUS'] as const) {
+  test(`${spellingType}: a checked lone SPELL opens the same timed challenge for everyone without exposing the word`, () => {
+    const { state, rules } = spell(spellingType)
+    assert.equal(state.spelling?.stage, 'ACTIVE')
+    assert.equal(state.spelling?.deadline, 16000)
+    const first = rules.view(state, a, 1000).spelling!,
+      second = rules.view(state, b, 1000).spelling!
+    assert.equal(first.audioUrl, second.audioUrl)
+    assert.equal(first.playerCount, 2)
+    assert.equal(first.results.length, 0)
+    assert.equal(rules.view(state, c).spelling!.audioUrl, null)
+    assert.throws(() => fold(state, a))
+  })
+  test(`${spellingType}: mixed SPELL is a wildcard, but never starts a spelling challenge`, () => {
+    const { state } = fixture(spellingType)
+    state.hands[a] = [card('SPELL'), card('A'), card('2')]
+    play(state, a, 'A', state.hands[a].slice(0, 2))
+    challenge(state, b)
+    assert.equal(state.spelling, null)
+    assert.equal(state.earnings[a], 40)
+  })
+  test(`${spellingType}: spelling correct/wrong answers settle once with exact pool-size penalties`, () => {
+    const { state, rules } = spell(spellingType),
+      round = state.spelling!,
+      beforeA = state.hands[a].length,
+      beforeB = state.hands[b].length
     rules.command(
       state,
       a,
@@ -411,108 +463,122 @@ test('spelling correct/wrong answers settle once with exact pool-size penalties'
         roomId: room,
         action: 'SPELL_ANSWER',
         spellingId: round.id,
-        answer: 'again',
+        answer: round.questions[a].text,
       },
       2000
     )
-  )
-  rules.command(
-    state,
-    b,
-    {
-      roomId: room,
-      action: 'SPELL_ANSWER',
-      spellingId: round.id,
-      answer: 'wrong',
-    },
-    2000
-  )
-  assert.equal(round.stage, 'COMPLETE')
-  assert.equal(state.hands[a].length, beforeA)
-  assert.equal(state.hands[b].length, beforeB + round.penalty)
-  const count = state.hands[b].length
-  rules.tick(state, 20000)
-  assert.equal(state.hands[b].length, count)
-})
-test('spelling deadline auto-submits latest draft, including clearing a previous draft', () => {
-  const { state, rules } = spell(),
-    round = state.spelling!
-  for (const answer of [round.questions[a].text, ''])
-    rules.command(
-      state,
-      a,
-      { roomId: room, action: 'SPELL_DRAFT', spellingId: round.id, answer },
-      2000
-    )
-  rules.command(
-    state,
-    b,
-    {
-      roomId: room,
-      action: 'SPELL_DRAFT',
-      spellingId: round.id,
-      answer: round.questions[b].text,
-    },
-    2000
-  )
-  rules.tick(state, round.deadline)
-  assert.equal(round.results.find((r) => r.playerId === a)?.answer, '')
-  assert.equal(round.results.find((r) => r.playerId === a)?.correct, false)
-  assert.equal(round.results.find((r) => r.playerId === b)?.correct, true)
-})
-test('stale spelling IDs, spectator answers, long answers and late attempts are rejected or settled safely', () => {
-  const { state, rules } = spell(),
-    round = state.spelling!
-  for (const [player, spellingId, answer] of [
-    [a, randomUUID(), 'word'],
-    [c, round.id, 'word'],
-    [a, round.id, 'x'.repeat(65)],
-  ]) {
     assert.throws(() =>
       rules.command(
         state,
-        player,
-        { roomId: room, action: 'SPELL_ANSWER', spellingId, answer },
+        a,
+        {
+          roomId: room,
+          action: 'SPELL_ANSWER',
+          spellingId: round.id,
+          answer: 'again',
+        },
         2000
       )
     )
-  }
-  rules.command(
-    state,
-    a,
-    {
-      roomId: room,
-      action: 'SPELL_ANSWER',
-      spellingId: round.id,
-      answer: 'late',
-    },
-    round.deadline
-  )
-  assert.equal(round.stage, 'COMPLETE')
-  assert.equal(round.results.find((r) => r.playerId === a)?.answer, '')
-})
-test('a final SPELL does not win before spelling resolution', () => {
-  const { state, rules } = fixture('LIARS_DECK_4_FUN')
-  state.hands[a] = [card('SPELL')]
-  play(state, a)
-  challenge(state, b)
-  assert.equal(state.phase, 'ACTIVE')
-  const round = state.spelling!
-  for (const player of [a, b])
     rules.command(
       state,
-      player,
+      b,
       {
         roomId: room,
         action: 'SPELL_ANSWER',
         spellingId: round.id,
-        answer: round.questions[player].text,
+        answer: 'wrong',
       },
       2000
     )
-  assert.equal(state.winnerId, a)
-  assert.equal(state.phase, 'FINISHED')
-})
+    assert.equal(round.stage, 'COMPLETE')
+    assert.equal(state.hands[a].length, beforeA)
+    assert.equal(state.hands[b].length, beforeB + round.penalty)
+    const count = state.hands[b].length
+    rules.tick(state, 20000)
+    assert.equal(state.hands[b].length, count)
+  })
+  test(`${spellingType}: spelling deadline auto-submits latest draft, including clearing a previous draft`, () => {
+    const { state, rules } = spell(spellingType),
+      round = state.spelling!
+    for (const answer of [round.questions[a].text, ''])
+      rules.command(
+        state,
+        a,
+        { roomId: room, action: 'SPELL_DRAFT', spellingId: round.id, answer },
+        2000
+      )
+    rules.command(
+      state,
+      b,
+      {
+        roomId: room,
+        action: 'SPELL_DRAFT',
+        spellingId: round.id,
+        answer: round.questions[b].text,
+      },
+      2000
+    )
+    rules.tick(state, round.deadline)
+    assert.equal(round.results.find((r) => r.playerId === a)?.answer, '')
+    assert.equal(round.results.find((r) => r.playerId === a)?.correct, false)
+    assert.equal(round.results.find((r) => r.playerId === b)?.correct, true)
+  })
+  test(`${spellingType}: stale spelling IDs, spectator answers, long answers and late attempts are rejected or settled safely`, () => {
+    const { state, rules } = spell(spellingType),
+      round = state.spelling!
+    for (const [player, spellingId, answer] of [
+      [a, randomUUID(), 'word'],
+      [c, round.id, 'word'],
+      [a, round.id, 'x'.repeat(65)],
+    ]) {
+      assert.throws(() =>
+        rules.command(
+          state,
+          player,
+          { roomId: room, action: 'SPELL_ANSWER', spellingId, answer },
+          2000
+        )
+      )
+    }
+    rules.command(
+      state,
+      a,
+      {
+        roomId: room,
+        action: 'SPELL_ANSWER',
+        spellingId: round.id,
+        answer: 'late',
+      },
+      round.deadline
+    )
+    assert.equal(round.stage, 'COMPLETE')
+    assert.equal(round.results.find((r) => r.playerId === a)?.answer, '')
+  })
+  test(`${spellingType}: a final SPELL does not win before spelling resolution`, () => {
+    const { state, rules } = fixture(spellingType)
+    state.hands[a] = [card('SPELL')]
+    play(state, a)
+    challenge(state, b)
+    assert.equal(state.phase, 'ACTIVE')
+    const round = state.spelling!
+    for (const player of [a, b])
+      rules.command(
+        state,
+        player,
+        {
+          roomId: room,
+          action: 'SPELL_ANSWER',
+          spellingId: round.id,
+          answer: round.questions[player].text,
+        },
+        2000
+      )
+    assert.equal(state.winnerId, a)
+    assert.equal(state.phase, 'FINISHED')
+  })
+
+}
 
 test('action log identifies each actor, survives old saved deals, and never contains private card faces', () => {
   const { state, rules } = fixture('LIARS_DECK', [a, b, c])

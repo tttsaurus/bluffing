@@ -29,7 +29,7 @@ function fixture(seed = {}) {
     emit(type, payload) { this.onmessage?.({data:JSON.stringify({type,payload})}) }
   }
   const context = vm.createContext({
-    exports:{}, require, crypto, btoa, queueMicrotask, AbortController,
+    exports:{}, require, crypto, btoa, queueMicrotask, AbortController, Date:seed.Date ?? Date,
     localStorage:storage(local), sessionStorage:storage(session),
     location:{protocol:'http:',host:'qa.test',hostname:'qa.test'},
     WebSocket:Socket, window:{
@@ -450,4 +450,66 @@ test('an overflowing hand stays left-scrollable without clipping its first card'
   assert.match(css,/\.playing-card:first-child \{ margin-left: auto; \}/)
   assert.match(css,/\.playing-card:last-child \{ margin-right: auto; \}/)
   assert.match(css,/scroll-padding-inline: 14px/)
+})
+
+test('throw purchases send an item, target, current deal and unique receipt without a client-supplied price', async () => {
+  const f = fixture(); await f.identify()
+  f.store.setState({room:{...room,game:{phase:'ACTIVE',gameId:'current-deal'}}})
+  assert.equal(f.store.getState().throwItem('COFFEE','target-player'),true)
+  const sent = f.sockets.at(-1).sent.at(-1)
+  assert.equal(sent.type,'GAME_COMMAND')
+  assert.equal(sent.payload.action,'THROW')
+  assert.equal(sent.payload.item,'COFFEE')
+  assert.equal(sent.payload.targetId,'target-player')
+  assert.equal(sent.payload.gameId,'current-deal')
+  assert.match(sent.payload.requestId,/^[a-f0-9-]{36}$/)
+  assert.equal(sent.payload.price,undefined)
+  f.store.setState({connected:false})
+  assert.equal(f.store.getState().throwItem('TOMATO','target-player'),false)
+  f.store.setState({connected:true,room:{...room,game:{phase:'FINISHED'}}})
+  assert.equal(f.store.getState().throwItem('TOMATO','target-player'),false)
+})
+
+test('continuous tomato purchases send every click with a distinct receipt before any confirmation', async () => {
+  const f = fixture(); await f.identify()
+  f.store.setState({room:{...room,game:{phase:'ACTIVE',gameId:'current-deal',throws:[]}}})
+  for (let index=0; index<10; index++) assert.equal(f.store.getState().throwItem('TOMATO','target-player'),true)
+  const purchases = f.sockets.at(-1).sent.filter(message=>message.payload.action==='THROW')
+  assert.equal(purchases.length,10)
+  assert.equal(new Set(purchases.map(message=>message.payload.requestId)).size,10)
+})
+
+test('reconnect retries only unconfirmed purchases, keeping every original receipt ID', async () => {
+  const f = fixture(); await f.identify()
+  f.store.setState({room:{...room,game:{phase:'ACTIVE',gameId:'current-deal'}}})
+  const originalSocket = f.sockets.at(-1)
+  for (let index=0; index<4; index++) f.store.getState().throwItem('TOMATO','target-player')
+  const originals = originalSocket.sent.filter(message=>message.payload.action==='THROW')
+  originalSocket.emit('THROW_CONFIRMED',{requestId:originals[0].payload.requestId})
+  originalSocket.emit('ERROR',{message:'Not enough coins',requestId:originals[1].payload.requestId})
+  originalSocket.emit('THROW_CONFIRMED',{requestId:'unrelated'})
+  originalSocket.close()
+  f.runTimer(1600)
+  const reconnected = f.sockets.at(-1)
+  reconnected.open(); reconnected.emit('CONNECTED',{playerId:player.id})
+  const retries = reconnected.sent.filter(message=>message.payload.action==='THROW')
+  assert.deepEqual(retries,originals.slice(2))
+  for (const retry of retries) reconnected.emit('THROW_CONFIRMED',{requestId:retry.payload.requestId})
+  assert.equal(f.store.getState().throwItem('TOMATO','target-player'),true)
+})
+
+test('failed sends and old deals are never retried as new purchases', async () => {
+  const f = fixture(); await f.identify()
+  f.store.setState({room:{...room,game:{phase:'ACTIVE',gameId:'current-deal'}}})
+  const socket = f.sockets.at(-1), send = socket.send
+  socket.send = ()=>{throw new Error('Socket closed')}
+  assert.equal(f.store.getState().throwItem('TOMATO','target-player'),false)
+  socket.send = send
+  assert.equal(f.store.getState().throwItem('TOMATO','target-player'),true)
+  socket.emit('ROOM_STATE',{...room,game:{phase:'ACTIVE',gameId:'next-deal'}})
+  socket.close(); f.runTimer(1600)
+  const reconnected = f.sockets.at(-1)
+  reconnected.open(); reconnected.emit('CONNECTED',{playerId:player.id})
+  assert.equal(reconnected.sent.filter(message=>message.payload.action==='THROW').length,0)
+  assert.equal(f.store.getState().throwItem('TOMATO','target-player'),true)
 })

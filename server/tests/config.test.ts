@@ -95,6 +95,7 @@ test('ports are strictly validated', () => {
   assert.equal(port('8080'), 8080)
 })
 test('HTTP and socket validation reject malformed types before touching the database', () => {
+  assert.equal(v.createRoom.safeParse({ name: 'Combined table', gameType: 'LIARS_DECK_4FUN_PLUS' }).success, true)
   assert.equal(
     v.createRoom.safeParse({ name: 'table', gameType: 'UNKNOWN' }).success,
     false
@@ -136,4 +137,16 @@ test('the full legacy SQL history is discoverable independently of the caller wo
     files.map((file) => file.version),
     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
   )
+})
+
+test('throw commands require a known item, target, deal and idempotency receipt', () => {
+  const id = '11111111-1111-4111-8111-111111111111'
+  const payload = { roomId: id, gameId: id, requestId: id, targetId: id, action: 'THROW', item: 'TOMATO' }
+  assert.equal(v.command.safeParse(payload).success, true)
+  for (const key of ['item', 'targetId', 'gameId', 'requestId']) {
+    const incomplete = { ...payload } as Record<string, unknown>
+    delete incomplete[key]
+    assert.equal(v.command.safeParse(incomplete).success, false)
+  }
+  assert.equal(v.command.safeParse({ ...payload, item: 'FREE_ITEM' }).success, false)
 })

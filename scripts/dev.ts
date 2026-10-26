@@ -118,7 +118,7 @@ async function main() {
     void stop(143)
   })
   const backend = `http://127.0.0.1:${backendPort}`
-  start(['--import', 'tsx', 'server/src/local.ts'])
+  start(['--watch', '--import', 'tsx', 'server/src/local.ts'])
   async function wait(url: string) {
     const deadline = Date.now() + timeout * 1000
     while (!stopping && Date.now() < deadline) {

@@ -115,8 +115,10 @@ export class Realtime {
       peer.chain = peer.chain
         .then(async () => {
           if (ws.readyState !== WebSocket.OPEN) return
+          let requestId: string | undefined
           try {
             const message = socketMessage.parse(JSON.parse(data.toString()))
+            if (message.type === 'GAME_COMMAND') requestId = message.payload.requestId
             if (message.type === 'AUTH') {
               if (peer.account)
                 throw new AppError(
@@ -168,7 +170,12 @@ export class Realtime {
               if (peer.roomId !== message.payload.roomId)
                 throw new AppError(403, 'Enter the room before playing')
               await this.rooms.command(peer.account, message.payload)
-              await this.refresh(peer.roomId)
+              if (message.payload.action === 'THROW') {
+                // The purchase has committed. A failed broadcast must not make
+                // the buyer mistake it for a failed purchase and pay again.
+                await this.refresh(peer.roomId).catch(error => console.error('Throw broadcast failed', error))
+                this.send(peer, 'THROW_CONFIRMED', { requestId })
+              } else await this.refresh(peer.roomId)
             } else if (message.type === 'LEAVE_ROOM') {
               const previous = peer.roomId
               await this.rooms.leave(peer.sessionId, peer.connectionId)
@@ -177,6 +184,7 @@ export class Realtime {
             }
           } catch (error) {
             this.send(peer, 'ERROR', {
+              requestId,
               message:
                 error instanceof ZodError
                   ? 'Invalid live message'

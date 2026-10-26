@@ -9,6 +9,7 @@ import type {
 } from '../../shared/contracts.ts'
 import { transaction, type DbClient } from './db.ts'
 import { engine } from './game/engine.ts'
+import { gameCashflow } from './game/throwables.ts'
 import type { GameCommand, GameState, StartSettings } from './game/state.ts'
 import { AppError, invariant } from './errors.ts'
 import type { Account } from './identity.ts'
@@ -83,15 +84,16 @@ function balanceRestore(room: Aggregate) {
     item.game_start_balance = null
   }
 }
-function settle(room: Aggregate, beforeEarnings: Record<string, number>) {
+function settle(room: Aggregate, beforeCashflow: Record<string, number>) {
   const state = room.game_state
   if (!state) return
+  const cashflow = gameCashflow(state)
   for (const item of room.members) {
     const delta =
-      (state.earnings[item.player_id] ?? 0) -
-      (beforeEarnings[item.player_id] ?? 0)
+      (cashflow[item.player_id] ?? 0) -
+      (beforeCashflow[item.player_id] ?? 0)
     invariant(
-      delta >= 0 && Number.isSafeInteger(item.balance + delta),
+      Number.isSafeInteger(item.balance + delta) && item.balance + delta >= 0,
       'Invalid wallet settlement',
       500
     )
@@ -212,7 +214,7 @@ export class Rooms {
       const room = await this.load(db, id),
         original = JSON.stringify(room)
       if (advance && room.game_state?.phase === 'ACTIVE') {
-        const before = { ...room.game_state.earnings },
+        const before = gameCashflow(room.game_state),
           rules = engine(room.game_type)
         for (const player of [...room.game_state.order])
           if (
@@ -403,7 +405,7 @@ export class Rooms {
         [id, target]
       )
       if (room.game_state) {
-        const before = { ...room.game_state.earnings }
+        const before = gameCashflow(room.game_state)
         engine(room.game_type).depart(room.game_state, target)
         settle(room, before)
       }
@@ -464,7 +466,7 @@ export class Rooms {
         'No active game in this room'
       )
       invariant(
-        !command.gameId || command.gameId === room.game_state.gameId,
+        command.action === 'THROW' ? command.gameId === room.game_state.gameId : !command.gameId || command.gameId === room.game_state.gameId,
         'The deal changed; refresh the table before playing'
       )
       if (command.requestId) {
@@ -474,8 +476,8 @@ export class Rooms {
         )
         if (!result.rowCount) return
       }
-      const before = { ...room.game_state.earnings }
-      engine(room.game_type).command(room.game_state, actor.id, command)
+      const before = gameCashflow(room.game_state)
+      engine(room.game_type).command(room.game_state, actor.id, command, Date.now(), member(room, actor.id).balance)
       settle(room, before)
     })
   }
