@@ -220,6 +220,8 @@ Vercel hosts the frontend and Node backend; Neon supplies PostgreSQL. You do not
 5. Select Node.js **24**, enable **Fluid Compute**, and choose a function region near Neon. WebSocket hosting requires Fluid Compute; see [Vercel's WebSocket documentation](https://vercel.com/docs/functions/websockets).
 6. Deploy. The checked-in `vercel.json` installs dependencies, runs `npm run vercel-build` (migrations + build), serves `frontend/dist`, and routes `/api/*` and `/ws` to the Node backend. No separate frontend/backend deployment is needed.
 
+The backend compiler rewrites relative `.ts` imports to `.js` for Vercel's emitted function files. Keep `rewriteRelativeImportExtensions` enabled in `server/tsconfig.json`; disabling it causes `ERR_MODULE_NOT_FOUND` on cold starts. Spelling assets are included through `vercel.json` and resolved relative to the server module, independently of the runtime working directory. `npm run test:scripts` checks the emitted function without TypeScript sources, including its health route and spelling assets.
+
 Connection strings belong in server environment variables, never `VITE_*` variables or committed files. Local `.env.local` files are not automatically uploaded to Vercel.
 
 ### What changes in hosted mode

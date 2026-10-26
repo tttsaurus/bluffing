@@ -1,14 +1,18 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { randomInt } from 'node:crypto'
 import type { Word } from './state.ts'
 
-export const directory = resolve(
-  process.cwd(),
-  existsSync(resolve(process.cwd(), 'server/resources/spelling'))
-    ? 'server/resources/spelling'
-    : 'resources/spelling'
+// Vercel preserves the module tree; the local esbuild bundle lives in server/dist.
+// Resolve both layouts from this module so cold starts do not depend on cwd.
+const resourceDirectories = ['../../resources/spelling/', '../resources/spelling/']
+  .map((path) => fileURLToPath(new URL(path, import.meta.url)))
+const resourceDirectory = resourceDirectories.find((path) =>
+  existsSync(resolve(path, 'words.tsv'))
 )
+if (!resourceDirectory) throw new Error('Missing packaged spelling resources')
+export const directory = resourceDirectory
 export const words: Word[] = readFileSync(
   resolve(directory, 'words.tsv'),
   'utf8'
