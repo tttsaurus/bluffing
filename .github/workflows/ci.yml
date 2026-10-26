@@ -89,7 +89,8 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm ci --include=optional
       - run: npm run build
-      - run: npx playwright install --with-deps chromium
+      - name: Install frontend workspace browsers
+        run: npm exec --workspace frontend -- playwright install --with-deps chromium
       - run: npm run test:ci
       - name: Upload browser and backend diagnostics
         if: always()

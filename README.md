@@ -247,7 +247,7 @@ After setting that variable:
 
 ```bash
 npm run build
-npx playwright install chromium
+npm exec --workspace frontend -- playwright install chromium
 npm run test:ci
 ```
 

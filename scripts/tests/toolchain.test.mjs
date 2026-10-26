@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { createRequire } from 'node:module'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
 test('every workspace uses the same portable compiler on Linux, macOS and Windows', () => {
   const read = path => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'))
@@ -30,4 +32,19 @@ test('native build tools lock their Linux, macOS and Windows optional binaries',
       assert.equal(lock.packages[`node_modules/${binary}`]?.version, version, `Missing locked platform binary: ${binary}`)
     }
   }
+})
+
+test('CI resolves the frontend Playwright binary from the repository root', () => {
+  const root = fileURLToPath(new URL('../../', import.meta.url))
+  const workflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8')
+  assert.match(workflow, /npm exec --workspace frontend -- playwright install --with-deps chromium/)
+  assert.doesNotMatch(workflow, /run: npx playwright/)
+  const frontendRequire = createRequire(new URL('../../frontend/package.json', import.meta.url))
+  const version = frontendRequire('@playwright/test/package.json').version
+  const result = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm',
+    ['exec', '--workspace', 'frontend', '--', 'playwright', '--version'], {
+      cwd: root, encoding: 'utf8', timeout: 15_000, shell: process.platform === 'win32',
+    })
+  assert.equal(result.status, 0, result.stderr || String(result.error))
+  assert.equal(result.stdout.trim(), `Version ${version}`)
 })
