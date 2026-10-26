@@ -44,9 +44,30 @@ test('backend health precedes frontend startup; TERM cleans both and its own PID
   const f=fixture()
   try{f.start();await f.wait('Bluff Table is ready');const log=f.log();assert.ok(log.indexOf('backend healthy')<log.indexOf('frontend started'));assert.ok(existsSync(join(f.root,'.local/app.pid')))}finally{await f.clean()}
 })
-for(const [env,message] of [[{FAIL_MIGRATION:'1'},'Migration failed'],[{FAIL_TAILNET:'1'},'Tailscale is not connected'],[{FAIL_BACKEND:'1'},'A development server stopped'],[{FAIL_FRONTEND:'1'},'A development server stopped']]) {
- test('startup failure cleans up safely: '+Object.keys(env)[0],async()=>{
-   const f=fixture(env)
-   try{const child=f.start(env.FAIL_TAILNET?['--tailnet']:[]);await new Promise(resolve=>child.once('exit',resolve));assert.notEqual(child.exitCode,0,f.output);assert.match(f.output,new RegExp(message));if(env.FAIL_TAILNET||env.FAIL_MIGRATION)assert.doesNotMatch(f.log(),/started/);if(env.FAIL_FRONTEND)assert.match(f.log(),/backend stopped/)}finally{await f.clean()}
- })
+for (const [env, message] of [
+  [{ FAIL_MIGRATION: '1' }, /Migration failed/],
+  [{ FAIL_TAILNET: '1' }, /Tailscale is not connected/],
+  // Node's backend watcher stays alive after its child fails, waiting for edits.
+  // The launcher must time out on health and then stop that watcher itself.
+  [{ FAIL_BACKEND: '1' }, /Timed out waiting for http:\/\/127\.0\.0\.1:45871\/api\/health/],
+  [{ FAIL_FRONTEND: '1' }, /A development server stopped/],
+]) {
+  test('startup failure cleans up safely: ' + Object.keys(env)[0], async () => {
+    const f = fixture(env)
+    try {
+      const child = f.start(env.FAIL_TAILNET ? ['--tailnet'] : [])
+      await new Promise(resolve => child.once('exit', resolve))
+      assert.notEqual(child.exitCode, 0, f.output)
+      assert.match(f.output, message)
+      assert.equal(existsSync(join(f.root, '.local/app.pid')), false)
+      if (env.FAIL_TAILNET || env.FAIL_MIGRATION) assert.doesNotMatch(f.log(), /started/)
+      if (env.FAIL_BACKEND) {
+        assert.doesNotMatch(f.log(), /frontend started/)
+        assert.match(f.output, /Stopping development servers/)
+      }
+      if (env.FAIL_FRONTEND) assert.match(f.log(), /backend stopped/)
+    } finally {
+      await f.clean()
+    }
+  })
 }

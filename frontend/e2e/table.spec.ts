@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import type { Player, RoomView } from '../src/types'
-import { suitSymbols } from '../src/gameModes'
+import { gameModes, suitSymbols } from '../src/gameModes'
 import { randomBytes } from 'node:crypto'
 
 async function identity(page: Page) {
@@ -41,6 +41,9 @@ test('persistent identity supports duplicate names and nickname edits', async ({
 
 for (const gameType of ['LIARS_DECK', 'LIARS_DECK_PLUS', 'LIARS_DECK_4_FUN', 'LIARS_DECK_4FUN_PLUS'] as const) {
 test(`two browsers create, join, play, truth-check privately and stop ${gameType}`, async ({ page, browser }) => {
+  const mode = gameModes[gameType]
+  const plus = mode.ruleHints.includes('plus')
+  const spelling = mode.ruleHints.includes('spelling')
   const host = await enter(page, 'CI dealer')
   const roomName = `CI ${gameType === 'LIARS_DECK_PLUS' ? 'Plus' : 'Classic'} ${Date.now()}`
   let roomId: string | undefined
@@ -82,8 +85,7 @@ test(`two browsers create, join, play, truth-check privately and stop ${gameType
     await expect(guestPage.getByRole('region', { name: 'Players' })).toBeVisible()
     await expect(guestPage.getByText('GAME SETUP', { exact: true })).toHaveCount(0)
     await expect(page.getByText('HERE', { exact: true })).toHaveCount(2)
-    if (gameType === 'LIARS_DECK_PLUS') {
-      await expect(page.getByRole('region', { name: 'Liar’s Deck Plus rules' })).toBeVisible()
+    if (mode.randomDecks) {
       await page.getByRole('checkbox', { name: /Random decks/ }).check()
       await expect(guestPage.getByRole('checkbox', { name: /Random decks/ })).toHaveCount(0)
     } else {
@@ -111,7 +113,7 @@ test(`two browsers create, join, play, truth-check privately and stop ${gameType
     expect(initial.players).toHaveLength(4)
     expect(initial.game!.participants).toEqual(expect.arrayContaining([host.player.id, guest.player.id]))
     expect(initial.game!.participants).toHaveLength(2)
-    if (gameType === 'LIARS_DECK_PLUS') {
+    if (plus) {
       expect(initial.game!.deckCount).toBeGreaterThanOrEqual(1)
       expect(initial.game!.deckCount).toBeLessThanOrEqual(2)
       expect(initial.game!.cardsPerPlayer).toBe(initial.game!.deckCount * 27)
@@ -120,14 +122,17 @@ test(`two browsers create, join, play, truth-check privately and stop ${gameType
       expect(jokerCount).toBe(initial.game!.deckCount * 2)
       expect(await page.getByRole('button', { name: 'Joker (wild card)', exact: true }).count()
         + await guestPage.getByRole('button', { name: 'Joker (wild card)', exact: true }).count()).toBe(jokerCount)
-      await page.getByText('4-card straight → 4 × a rank inside it', { exact: true }).click()
-      await expect(page.getByLabel('A, 2, 3, 4 can claim four Aces, twos, threes or fours')).toBeVisible()
+      await page.getByRole('button', { name: /Expand reward panel/ }).click()
+      await page.getByText('Game rules & selection hints', { exact: true }).click()
+      await expect(page.getByText('4-card straight → 4 × a rank inside it', { exact: true })).toBeVisible()
+      await expect(page.getByText('Ace can be low (A-2-3-4) or high (J-Q-K-A), never wraparound', { exact: true })).toBeVisible()
       await page.screenshot({ path: test.info().outputPath('plus-table.png'), fullPage: true })
+      await page.getByRole('button', { name: /Collapse reward panel/ }).click()
     }
     const [actor, checker, actorToken, checkerToken] = initial.game!.currentPlayerId === host.player.id
       ? [page, guestPage, host.token, guest.token] : [guestPage, page, guest.token, host.token]
     const before = await snapshot(actorToken)
-    const card = gameType === 'LIARS_DECK_4_FUN' ? before.game!.hand.find(card => card.rank === 'SPELL')! : before.game!.hand[0]
+    const card = spelling ? before.game!.hand.find(card => card.rank === 'SPELL')! : before.game!.hand[0]
     // Multiple physical decks intentionally contain identical rank/suit labels.
     await actor.getByRole('button', { name: card.rank === 'SPELL' ? 'Spell card' : `${card.rank} of ${card.suit.toLowerCase()}`, exact: true }).first().click()
     await actor.getByRole('button', { name: /^PLAY / }).click()
@@ -138,7 +143,7 @@ test(`two browsers create, join, play, truth-check privately and stop ${gameType
     const defended = await snapshot(actorToken)
     expect(checked.game!.plays!.at(-1)!.revealedCards).toHaveLength(1)
     expect(defended.game!.plays!.at(-1)!.revealedCards).toHaveLength(0)
-    if (gameType === 'LIARS_DECK_4_FUN') {
+    if (spelling) {
       for (const viewer of [actor, checker]) {
         await expect(viewer.getByRole('dialog', { name: 'Spelling challenge' })).toBeVisible()
         await viewer.getByLabel('YOUR SPELLING', { exact: true }).fill('intentionallywrong')
@@ -152,8 +157,15 @@ test(`two browsers create, join, play, truth-check privately and stop ${gameType
       expect((await snapshot(host.token)).game!.spelling!.stage).toBe('COMPLETE')
     }
     await checker.locator('.history-menu > summary').click()
-    await expect(checker.getByRole('region', { name: 'Recent plays' }).getByText(`${card.rank}${suitSymbols[card.suit]}`)).toBeVisible()
+    const revealed = checker.getByRole('region', { name: 'Recent plays' }).getByLabel('Cards revealed to you')
+    await expect(revealed).toHaveCount(2)
+    for (const entry of await revealed.all()) {
+      await expect(entry.getByText(`${card.rank}${suitSymbols[card.suit]}`, { exact: true })).toBeVisible()
+    }
     await checker.locator('.history-menu > summary').click()
+    await actor.locator('.history-menu > summary').click()
+    await expect(actor.getByRole('region', { name: 'Recent plays' }).getByLabel('Cards revealed to you')).toHaveCount(0)
+    await actor.locator('.history-menu > summary').click()
 
     // Dismiss the result overlay before opening the moderator dialog.
     for (const viewer of [page, guestPage]) {
