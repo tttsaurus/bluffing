@@ -61,4 +61,23 @@ test('eight avatar seats, duplicate identity tags, wallet and hand remain usable
     useGameStore.setState({ connected: false })
   })
   await expect(page.getByRole('button', { name: 'RECONNECT ↻' })).toBeVisible()
+  await page.evaluate(async view => {
+    const modulePath = '/src/store.ts'
+    const { useGameStore } = await import(modulePath)
+    useGameStore.setState({ connected: true, room: { ...view, game: { ...view.game!, targetRank: 'Q', poolSize: 4, consecutiveFolds: 1 } } })
+  }, view)
+  const currentRank = page.getByRole('status', { name: 'Current rank: Q' })
+  await expect(currentRank).toBeVisible()
+  const rankBounds = (await currentRank.boundingBox())!
+  const felt = (await page.locator('.felt').boundingBox())!
+  expect(rankBounds.x).toBeGreaterThanOrEqual(felt.x)
+  expect(rankBounds.x + rankBounds.width).toBeLessThanOrEqual(felt.x + felt.width)
+  expect(rankBounds.y + rankBounds.height).toBeLessThanOrEqual(felt.y + felt.height)
+  await page.screenshot({ path: test.info().outputPath('current-rank.png'), fullPage: true })
+  await page.evaluate(async view => {
+    const modulePath = '/src/store.ts'
+    const { useGameStore } = await import(modulePath)
+    useGameStore.setState({ room: view })
+  }, view)
+  await expect(page.locator('.pool-current-rank')).toHaveCount(0)
 })

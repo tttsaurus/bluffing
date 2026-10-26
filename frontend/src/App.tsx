@@ -1,8 +1,9 @@
 import { AnimatePresence, motion, MotionConfig } from 'motion/react'
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import { useGameStore } from './store'
-import type { Card, GameType, Member, Player, RoomSummary } from './types'
+import type { GameType, Member, Player, RoomSummary } from './types'
 import { CardBack } from './CardBack'
+import { CardHand } from './CardHand'
 import { PlayerAvatar } from './PlayerAvatar'
 import { SpellingChallenge } from './SpellingChallenge'
 import { DeckShop } from './DeckShop'
@@ -12,7 +13,7 @@ import { recentActions, skinNames, tableSkins } from './presentation'
 import { PlayHistory, RoundFeedback, Wallets } from './GameFeedback'
 import { TableActivity, TableSeats } from './TableActivity'
 import { TableActionEffects } from './TableActionEffects'
-import { gameModes, ranks, suitSymbols } from './gameModes'
+import { gameModes, ranks } from './gameModes'
 import { FourFunRules, PlusRules } from './PlusRules'
 
 export default function App() {
@@ -305,6 +306,9 @@ function GameTable({ onEffectsPending }: { onEffectsPending: (pending: boolean) 
                   <CardBack skin={game.poolSize ? skins.pool : skins.turn} compact />
                 </div>
                 <strong>{game.poolSize ? `${game.poolSize} ${game.poolSize === 1 ? 'card' : 'cards'}` : 'Open the round'}</strong>
+                {game.targetRank && <div className="pool-current-rank" role="status" aria-label={`Current rank: ${game.targetRank}`}>
+                  <span>CURRENT RANK</span><strong>{game.targetRank}</strong>
+                </div>}
               </motion.div>
             </div>
             <TableSeats room={room} playerId={player.id} />
@@ -325,8 +329,7 @@ function GameTable({ onEffectsPending }: { onEffectsPending: (pending: boolean) 
                 <button className="action play" disabled={!myTurn || selected.length === 0} onClick={play}><strong>PLAY {selected.length || ''}</strong></button>
               </div>
             </div>
-            <div ref={handScroll} className="cards" aria-label="Your hand"><div className="cards-track">{game.hand.map(card => <PlayingCard key={card.id} card={card}
-              selected={selected.includes(card.id)} disabled={!myTurn} onClick={() => setSelected(items => items.includes(card.id) ? items.filter(id => id !== card.id) : [...items, card.id])} />)}</div></div>
+            <CardHand cards={game.hand} selected={selected} disabled={!myTurn} onSelectionChange={setSelected} scrollRef={handScroll} />
           </section>}
           {gameModes[room.gameType].ruleHint === 'plus' && <div className="battle-rules"><PlusRules cards={game.hand.filter(card => selected.includes(card.id))} rank={game.targetRank ?? rank} /></div>}
           {gameModes[room.gameType].ruleHint === 'spelling' && <div className="battle-rules"><FourFunRules /></div>}
@@ -346,16 +349,6 @@ function GameTable({ onEffectsPending }: { onEffectsPending: (pending: boolean) 
       </div>
     </motion.div>
   )
-}
-
-function PlayingCard({ card, selected, disabled, onClick }: { card: Card; selected: boolean; disabled: boolean; onClick: () => void }) {
-  const spell = card.rank === 'SPELL'
-  const red = card.suit === 'HEARTS' || card.suit === 'DIAMONDS'
-  const joker = card.rank === 'JOKER'
-  const suit = spell ? '✦' : suitSymbols[card.suit]
-  return <button aria-label={spell ? 'Spell card' : joker ? 'Joker (wild card)' : `${card.rank} of ${card.suit.toLowerCase()}`} aria-pressed={selected} className={`playing-card ${spell ? 'spell-card' : ''} ${joker ? 'joker-card' : ''} ${red ? 'red' : ''} ${selected ? 'selected' : ''}`} disabled={disabled} onClick={onClick}>
-    <span>{spell ? 'SPELL' : card.rank}<small>{suit}</small></span><b>{suit}</b>{spell && <em className="spell-card-label">15 SECOND<br />SPELLING TRAP</em>}<span className="bottom">{spell ? 'SPELL' : card.rank}<small>{suit}</small></span>
-  </button>
 }
 
 function IdentityName({ name, tag }: { name: string; tag: string }) {

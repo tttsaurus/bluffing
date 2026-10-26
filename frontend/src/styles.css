@@ -233,6 +233,20 @@ input::placeholder { color: #a0aaa4; }
 .action.challenge { border-color: rgba(230,99,61,.5); color: #f09272; }
 .action.play { background: var(--orange); border-color: var(--orange); }
 .cards { overflow-x: auto; scrollbar-width: thin; padding: 0; scroll-padding-inline: 14px; }
+.card-hand .cards { user-select:none; -webkit-user-select:none; }
+.hand-selection-tools { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px 12px; padding:12px 14px 0; color:#bdcdbf; font-size:12px; }
+.hand-selected-count { color:#ffe6aa; font-weight:800; font-variant-numeric:tabular-nums; }
+.hand-drag-toggle { display:none; padding:6px 10px; border:1px solid #cbb37d80; border-radius:6px; color:#e9d8b0; background:#173a30; font:inherit; font-weight:750; }
+.hand-drag-toggle[aria-pressed="true"] { color:#17352b; background:#ffe4a1; border-color:#ffe4a1; }
+.hand-touch-hint { display:none; flex-basis:100%; text-align:right; font-size:11px; }
+.touch-select .cards { touch-action:pan-y pinch-zoom; }
+.touch-select .hand-drag-toggle,.touch-select .hand-touch-hint { display:block; }
+.touch-select .hand-drag-hint { display:none; }
+.drag-selecting .playing-card { cursor:grabbing; }
+@media (pointer:coarse) {
+  .hand-drag-hint { display:none; }
+  .hand-drag-toggle,.hand-touch-hint { display:block; }
+}
 .cards-track { box-sizing: border-box; width: max-content; min-width: 100%; height: 160px; display: flex; justify-content: flex-start; align-items: flex-end; padding: 30px 14px 8px; }
 .playing-card { flex: 0 0 72px; height: 106px; margin-left: -19px; position: relative; background: #f7f1e5; color: #142e26; border: 1px solid #cabfae; border-radius: 5px; box-shadow: -4px 3px 8px rgba(0,0,0,.23); cursor: pointer; padding: 6px; text-align: left; transition:transform .12s ease-out, box-shadow .12s ease-out; will-change:transform; }
 .playing-card:first-child { margin-left: auto; }
@@ -677,6 +691,9 @@ input::placeholder { color: #a0aaa4; }
 .game.battle-page .table-arena > .felt { position:absolute; inset:5% 5% 0; width:90%; height:92%; max-width:none; min-height:0; border-radius:50%; border-width:8px; }
 .game.battle-page .table-arena .felt-line,.game.battle-page .table-arena .turn-aura { border-radius:50%; }
 .game.battle-page .table-arena .pool { position:absolute; top:54%; left:50%; translate:-50% -50%; padding:0; width:auto; max-width:70%; }.game.battle-page .table-arena .your-turn-anchor { bottom:15%; }
+.pool-current-rank { position:absolute; top:calc(100% + 10px); left:50%; translate:-50% 0; display:flex; align-items:center; gap:12px; padding:7px 14px; border:1px solid #e6c77f; border-radius:9px; color:#ffe6a7; background:#0a2b24f5; box-shadow:0 4px 14px #0005; white-space:nowrap; }
+.pool-current-rank > span { font-size:10px; font-weight:850; letter-spacing:.12em; }
+.felt .pool-current-rank > strong { margin:0; font:700 28px/1 Georgia,serif; color:#fff1c9; }
 .game.battle-page .table-corner-info { position:fixed; z-index:27; top:82px; left:clamp(12px,1.5vw,24px); display:flex; flex-direction:column; align-items:flex-start; gap:7px; pointer-events:none; }
 .game.battle-page .table-corner-stat { display:flex; align-items:center; gap:10px; padding:9px 13px; border:1px solid #f1d28b8c; border-radius:8px; color:#fff1c7; background:#08271ff2; box-shadow:0 5px 18px #0007; }
 .game.battle-page .table-corner-stat > span { color:#c6d7c9; font-size:12px; font-weight:900; letter-spacing:.12em; white-space:nowrap; }
