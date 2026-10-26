@@ -12,6 +12,7 @@ import { AppError } from '../src/errors.ts'
 import { migrate, migrationFiles } from '../../scripts/db/migrate.ts'
 import type { GameState } from '../src/game/state.ts'
 import type { GameType } from '../../shared/contracts.ts'
+import { applyRoomOperations } from '../../shared/roomUpdates.ts'
 
 const url = process.env.TEST_DATABASE_URL
 if (
@@ -103,9 +104,9 @@ async function play(id: string, players: { actor: Account }[]) {
   return actor
 }
 
-async function liveClient(app: ReturnType<typeof createApplication>, token: string, roomId: string) {
+async function liveClient(app: ReturnType<typeof createApplication>, token: string, roomId: string, updates = false) {
   const ws = new WebSocket(`ws://127.0.0.1:${(app.server.address() as AddressInfo).port}/ws`)
-  const events: { type: string; payload: any }[] = []
+  const events: { type: string; payload: any; revision?: number }[] = []
   ws.on('message', data => events.push(JSON.parse(data.toString())))
   async function wait(predicate: (event: typeof events[number]) => boolean) {
     const previous = events.find(predicate)
@@ -121,12 +122,77 @@ async function liveClient(app: ReturnType<typeof createApplication>, token: stri
     })
   }
   await new Promise<void>((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject) })
-  ws.send(JSON.stringify({ type: 'AUTH', payload: { deviceToken: token, sessionId: randomUUID() } }))
+  ws.send(JSON.stringify({ type: 'AUTH', payload: { deviceToken: token, sessionId: randomUUID(), ...(updates ? { roomUpdates: 1 } : {}) } }))
   await wait(event => event.type === 'CONNECTED')
   ws.send(JSON.stringify({ type: 'SYNC_ROOM', payload: { roomId } }))
   await wait(event => event.type === 'ROOM_STATE')
   return { ws, events, wait }
 }
+
+for (const type of ['LIARS_DECK_4_FUN', 'LIARS_DECK_4FUN_PLUS'] as const) {
+  test(`200-card live plays persist once and keep private faces out of remote updates in ${type}`, async () => {
+    const f = await setup(type)
+    await roomsA.start(f.id, f.host, { deckCount: 8, cardsPerPlayer: 200 })
+    const initial = await state(f.id)
+    const actorId = initial.order[initial.currentIndex]
+    const actor = f.players.find(player => player.actor.id === actorId)!
+    const checker = f.players.find(player => player.actor.id !== actorId)!
+    const app = createApplication(first)
+    let one: Awaited<ReturnType<typeof liveClient>> | undefined, two: typeof one
+    try {
+      await new Promise<void>(resolve => app.server.listen(0, '127.0.0.1', resolve))
+      one = await liveClient(app, actor.token, f.id, true)
+      two = await liveClient(app, checker.token, f.id, true)
+      const before = one.events.find(event => event.type === 'ROOM_STATE')!.payload
+      const beforeOther = two.events.find(event => event.type === 'ROOM_STATE')!.payload
+      const payload = { roomId: f.id, gameId: initial.gameId, action: 'PLAY', declaredRank: 'A',
+        cardIds: initial.hands[actorId].slice(0, 200).map(card => card.id), requestId: randomUUID() }
+      one.ws.send(JSON.stringify({ type: 'GAME_COMMAND', payload }))
+      await one.wait(event => event.type === 'COMMAND_CONFIRMED' && event.payload.requestId === payload.requestId)
+      const patch = await one.wait(event => event.type === 'ROOM_UPDATE')
+      const remote = await two.wait(event => event.type === 'ROOM_UPDATE')
+      const local = applyRoomOperations(before, patch.payload.operations)
+      const other = applyRoomOperations(beforeOther, remote.payload.operations)
+      assert.equal(local.game!.hand.length, 1)
+      assert.equal(other.game!.hand.length, 201)
+      assert.equal(other.game!.poolSize, 200)
+      assert.equal(other.game!.plays!.at(-1)!.revealedCards.length, 0)
+      assert.ok(payload.cardIds.every(id => !JSON.stringify(remote).includes(id)))
+      one.ws.send(JSON.stringify({ type: 'GAME_COMMAND', payload }))
+      await one.wait(event => event.type === 'COMMAND_CONFIRMED' && event.payload.requestId === payload.requestId
+        && one!.events.filter(event => event.type === 'COMMAND_CONFIRMED' && event.payload.requestId === payload.requestId).length === 2)
+      const saved = await state(f.id)
+      assert.equal(saved.plays.length, 1)
+      assert.equal(saved.pool.length, 200)
+      assert.equal(saved.hands[actorId].length, 1)
+    } finally {
+      one?.ws.close(1012); two?.ws.close(1012)
+      await app.realtime.close()
+      await new Promise<void>(resolve => app.server.close(() => resolve()))
+    }
+  })
+}
+
+test('game-only mutations skip unchanged memberships and cosmetic ownership writes', async t => {
+  const f = await start('LIARS_DECK_4_FUN', 8)
+  const client = await first.connect()
+  const release = client.release.bind(client)
+  t.mock.method(client, 'release', () => {})
+  const queries = t.mock.method(client, 'query')
+  const rooms = new Rooms({ connect: async () => client } as unknown as pg.Pool)
+  try {
+    for (const expectedWrites of [0, 1]) {
+      const current = await state(f.id)
+      const actor = f.players.find(player => player.actor.id === current.order[current.currentIndex])!.actor
+      queries.mock.resetCalls()
+      await rooms.command(actor, { roomId: f.id, gameId: current.gameId, requestId: randomUUID(),
+        action: 'PLAY', declaredRank: current.targetRank ? undefined : 'A', cardIds: [current.hands[actor.id][0].id] })
+      const sql = queries.mock.calls.map(call => String(call.arguments[0]))
+      assert.equal(sql.filter(text => text.includes('INSERT INTO room_memberships')).length, expectedWrites)
+      assert.equal(sql.filter(text => text.includes('INSERT INTO member_skins') || text.includes('INSERT INTO member_avatars')).length, 0)
+    }
+  } finally { release() }
+})
 
 test('live sockets batch lease writes, tolerate temporary database errors and still reject expired sessions', async t => {
   const f = await start()

@@ -9,6 +9,7 @@ const require = createRequire(import.meta.url)
 const source = readFileSync(new URL('../src/store.ts', import.meta.url), 'utf8').replaceAll('import.meta.env', '({})')
 const code = stripTypeScriptTypes(source)
   .replace("import { create } from 'zustand'", "const { create } = require('zustand')")
+  .replace(/import \{ applyRoomOperations[^}]*\} from '..\/..\/shared\/roomUpdates'/, "const { applyRoomOperations } = require('../../shared/roomUpdates.ts')")
   .replace('export const useGameStore =', 'const useGameStore = exports.useGameStore =')
 const player = {id:'p1', displayName:'Tester', identityTag:'abcde', root:false}
 const room = {id:'room1', players:[], game:null}
@@ -25,8 +26,12 @@ function fixture(seed = {}) {
     constructor() { sockets.push(this) }
     send(value) { this.sent.push(JSON.parse(value)) }
     open() { this.readyState = 1; this.onopen?.() }
-    close() { this.readyState = 3; this.onclose?.({code:1000}) }
-    emit(type, payload) { this.onmessage?.({data:JSON.stringify({type,payload})}) }
+    close(code=1000) {
+      assert.ok(code === 1000 || (code >= 3000 && code <= 4999), 'Browser close code must be legal')
+      this.closeCode=code; this.readyState = 3; this.onclose?.({code})
+    }
+    drop(code=1006) { this.readyState=3; this.onclose?.({code}) }
+    emit(type, payload, metadata={}) { this.onmessage?.({data:JSON.stringify({type,payload,...metadata})}) }
   }
   const context = vm.createContext({
     exports:{}, require, crypto, btoa, queueMicrotask, AbortController, Date:seed.Date ?? Date,
@@ -56,12 +61,12 @@ function fixture(seed = {}) {
     requests.splice(index,1)[0].reject(new Error('Request failed'))
     await new Promise(resolve => setImmediate(resolve))
   }
-  async function identify(authenticated = true) {
+  async function identify(authenticated = true, open = true) {
     const pending = store.getState().identify('Tester')
     await respond('/api/players', player)
     await respond('/api/rooms', [])
     await pending
-    sockets.at(-1).open()
+    if (open) sockets.at(-1).open()
     if (authenticated) sockets.at(-1).emit('CONNECTED', {playerId:player.id})
   }
   function runTimer(delay) {
@@ -187,7 +192,7 @@ test('joining works during a disconnect and enters the room after automatic reco
 test('an open socket that never authenticates times out and gets replaced', async () => {
   const f = fixture(); await f.identify(false)
   const obsoleteClose = f.sockets[0].onclose
-  f.runTimer(12000)
+  f.runTimer(30000)
   assert.equal(f.sockets[0].readyState,3)
   assert.equal(f.store.getState().connected,false)
   obsoleteClose({code:1006})
@@ -199,8 +204,7 @@ test('an open socket that never authenticates times out and gets replaced', asyn
 })
 
 test('a handshake stuck in CONNECTING also times out without waiting for a browser close event', async () => {
-  const f = fixture(); await f.identify(false)
-  f.sockets[0].readyState=0
+  const f = fixture(); await f.identify(false, false)
   f.runTimer(12000)
   assert.equal(f.sockets[0].readyState,3)
   f.runTimer(250)
@@ -211,8 +215,75 @@ test('socket errors reconnect even when no close event arrives', async () => {
   const f = fixture(); await f.identify(false)
   f.sockets[0].onerror({})
   assert.equal(f.sockets[0].readyState,3)
+  assert.equal(f.sockets[0].closeCode,4000,'transport recovery must preserve the room lease')
   f.runTimer(250)
   assert.equal(f.sockets.length,2)
+})
+
+test('an authenticated handshake gets its own full cold-start budget', async () => {
+  const f = fixture(); await f.identify(false, false)
+  const handshakeTimer = f.timers[0]
+  f.sockets[0].open()
+  assert.ok(!f.timers.includes(handshakeTimer))
+  f.sockets[0].emit('CONNECTED',{playerId:player.id})
+  assert.equal(f.store.getState().connected,true)
+  assert.equal(f.timers.length,0)
+})
+
+test('incremental room updates preserve a 200-card hand and repair stale bases without reconnecting', async () => {
+  const f = fixture(); await f.identify()
+  const hand = Array.from({length:200},(_,id)=>({id:`card-${id}`,rank:'A',suit:'SPADES'}))
+  const view = {...room,game:{gameId:'deal',phase:'ACTIVE',hand,poolSize:0}}
+  f.store.setState({room:view})
+  const socket=f.sockets[0]
+  socket.emit('ROOM_STATE',view,{revision:1})
+  const stableHand=f.store.getState().room.game.hand
+  const change={roomId:room.id,baseRevision:1,revision:2,operations:[{path:['game','poolSize'],value:200}]}
+  socket.emit('ROOM_UPDATE',change)
+  assert.equal(f.store.getState().room.game.poolSize,200)
+  assert.equal(f.store.getState().room.game.hand,stableHand)
+  socket.emit('ROOM_UPDATE',change)
+  const syncs=socket.sent.filter(message=>message.type==='SYNC_ROOM').length
+  socket.emit('ROOM_UPDATE',change)
+  assert.equal(socket.sent.filter(message=>message.type==='SYNC_ROOM').length,syncs)
+  assert.equal(f.sockets.length,1)
+  assert.equal(f.store.getState().connected,true)
+  socket.emit('ROOM_STATE',{...view,game:{...view.game,poolSize:200}},{revision:3})
+  socket.emit('ROOM_UPDATE',{...change,baseRevision:3,revision:4,operations:[{path:['game','hand'],splice:{start:0,count:200,items:[]}}]})
+  assert.equal(f.store.getState().room.game.hand.length,0)
+})
+
+test('a local HTTP snapshot cannot be patched using an older WebSocket base', async () => {
+  const f=fixture(); await f.identify()
+  const socket=f.sockets[0]
+  f.store.setState({room})
+  socket.emit('ROOM_STATE',room,{revision:1})
+  f.store.setState({room:{...room,name:'Newer HTTP snapshot'}})
+  socket.emit('ROOM_UPDATE',{roomId:room.id,baseRevision:1,revision:2,operations:[{path:['name'],value:'Stale patch'}]})
+  assert.equal(f.store.getState().room.name,'Newer HTTP snapshot')
+  assert.equal(socket.sent.at(-1).type,'SYNC_ROOM')
+  assert.equal(f.store.getState().connected,true)
+})
+
+test('recovery retries an unacknowledged 200-card play once with its original receipt and send order', async () => {
+  const f=fixture(); await f.identify()
+  f.store.setState({room:{...room,game:{gameId:'deal',phase:'ACTIVE'}}})
+  const socket=f.sockets[0]
+  socket.emit('CONNECTED',{playerId:player.id,commandReceipts:1})
+  f.store.getState().command('PLAY',Array.from({length:200},()=>crypto.randomUUID()),'A')
+  f.store.getState().throwItem('TOMATO','target')
+  const original=socket.sent.filter(message=>message.type==='GAME_COMMAND')
+  socket.drop(1012); f.runTimer(250)
+  const replacement=f.sockets.at(-1)
+  replacement.open(); replacement.emit('CONNECTED',{playerId:player.id,commandReceipts:1})
+  const retried=replacement.sent.filter(message=>message.type==='GAME_COMMAND')
+  assert.deepEqual(retried,original)
+  replacement.emit('COMMAND_CONFIRMED',{requestId:original[0].payload.requestId})
+  replacement.emit('THROW_CONFIRMED',{requestId:original[1].payload.requestId})
+  replacement.drop(1012); f.runTimer(250)
+  const final=f.sockets.at(-1)
+  final.open(); final.emit('CONNECTED',{playerId:player.id,commandReceipts:1})
+  assert.equal(final.sent.filter(message=>message.type==='GAME_COMMAND').length,0)
 })
 
 test('manual retry cancels the old retry instead of spawning competing sockets', async () => {

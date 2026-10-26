@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { AvatarId, GameType, Player, RoomSummary, RoomView, SkinId, ThrowItemId } from './types'
+import { applyRoomOperations, type RoomUpdate } from '../../shared/roomUpdates'
 
 type GameAction = 'PLAY' | 'FOLD' | 'CHALLENGE' | 'SPELL_ANSWER' | 'SPELL_DRAFT'
 
@@ -53,7 +54,10 @@ let draftTimer: number | undefined
 type ThrowRequest = { playerId: string; payload: {
   roomId: string; gameId: string; requestId: string; action: 'THROW'; item: ThrowItemId; targetId: string
 } }
-const pendingThrows = new Map<string, ThrowRequest>()
+type MoveRequest = { playerId: string; payload: { roomId: string; gameId?: string; requestId: string;
+  action: GameAction; cardIds: string[]; declaredRank?: string; spellingId?: string; answer?: string } }
+const pendingRequests = new Map<string, ThrowRequest | MoveRequest>()
+let receiptSocket: WebSocket | null = null
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const controller = new AbortController()
@@ -145,7 +149,7 @@ export const useGameStore = create<Store>((set, get) => ({
       window.clearTimeout(connectionTimer)
       if (get().socket) retireSocket(get().socket!)
       deviceToken = result.deviceToken
-      pendingThrows.clear()
+      pendingRequests.clear()
       liveSessionId = crypto.randomUUID()
       set({ player: result.player, debugMode: !returning, socket: null, connected: false, rooms: targetRooms, loading: false })
       connect(set, get)
@@ -260,7 +264,7 @@ export const useGameStore = create<Store>((set, get) => ({
 
   leaveRoom: () => {
     ++navigation
-    pendingThrows.clear()
+    pendingRequests.clear()
     if (get().connected) sendIfOpen(get().socket, { type: 'LEAVE_ROOM', payload: {} })
     set({ room: null, loading: false })
     void get().loadRooms()
@@ -324,6 +328,9 @@ export const useGameStore = create<Store>((set, get) => ({
     const send = () => {
       if (get().socket !== socket || !get().connected || get().room?.id !== room.id || get().room?.game?.gameId !== payload.gameId) return
       if (action === 'SPELL_DRAFT' && (get().room?.game?.spelling?.id !== spellingId || get().room?.game?.spelling?.stage !== 'ACTIVE')) return
+      if (action !== 'SPELL_DRAFT' && receiptSocket === socket && get().player) {
+        pendingRequests.set(payload.requestId, { playerId: get().player!.id, payload: { ...payload, cardIds: [...cardIds] } })
+      }
       try { socket.send(JSON.stringify({ type: 'GAME_COMMAND', payload })) }
       catch { set({ error: 'The connection closed before the move could be sent' }) }
     }
@@ -342,13 +349,13 @@ export const useGameStore = create<Store>((set, get) => ({
     }
     const request: ThrowRequest = { playerId: player.id, payload: { roomId: room.id, gameId: room.game.gameId,
       action: 'THROW', item, targetId, requestId: crypto.randomUUID() } }
-    pendingThrows.set(request.payload.requestId, request)
+    pendingRequests.set(request.payload.requestId, request)
     set({ error: null })
     try {
       socket.send(JSON.stringify({ type: 'GAME_COMMAND', payload: request.payload }))
       return true
     } catch {
-      pendingThrows.delete(request.payload.requestId)
+      pendingRequests.delete(request.payload.requestId)
       set({ error: 'The connection closed before the throw could be sent' })
       return false
     }
@@ -374,11 +381,14 @@ function connect(set: (partial: Partial<Store>) => void, get: () => Store) {
   let retired = false
   let authenticated = false
   let authSent = false
+  let roomRevision: number | null = null
+  let revisionView: RoomView | null = null
+  let resyncing = false
   const disconnect = (restoreDevice = false) => {
     if (retired || get().socket !== socket) return
     retired = true
     window.clearTimeout(connectionTimer)
-    retireSocket(socket)
+    retireSocket(socket, true)
     set({ connected: false })
     // Function rotation is not a player quitting. Keep the table while its
     // database lease is alive; expired/departed players are rejected on resync.
@@ -396,8 +406,12 @@ function connect(set: (partial: Partial<Store>) => void, get: () => Store) {
   const authenticate = () => {
     if (retired || get().socket !== socket || authSent) return
     try {
-      socket.send(JSON.stringify({ type: 'AUTH', payload: { deviceToken, sessionId: liveSessionId } }))
+      socket.send(JSON.stringify({ type: 'AUTH', payload: { deviceToken, sessionId: liveSessionId, roomUpdates: 1 } }))
       authSent = true
+      // Give authentication its own budget after the handshake. A slow cold
+      // start must not consume almost all of the database authentication window.
+      window.clearTimeout(connectionTimer)
+      connectionTimer = window.setTimeout(() => disconnect(), 30_000)
     } catch { disconnect() }
   }
   // Covers stalled handshakes AND open sockets that never finish authentication.
@@ -414,14 +428,15 @@ function connect(set: (partial: Partial<Store>) => void, get: () => Store) {
     if (message.type === 'CONNECTED') {
       if (message.payload?.playerId !== get().player?.id) { disconnect(true); return }
       authenticated = true
+      receiptSocket = message.payload?.commandReceipts === 1 ? socket : null
       reconnectAttempts = 0
       window.clearTimeout(connectionTimer)
       set({ connected: true })
       const room = get().room
       if (room) socket.send(JSON.stringify({ type: 'SYNC_ROOM', payload: { roomId: room.id } }))
-      // The old connection may have committed the purchase without delivering
-      // its receipt. Reuse the same ID so a reconnect can never charge it twice.
-      for (const request of pendingThrows.values()) {
+      // Reuse receipts and original send order: recovery must never duplicate a
+      // committed play or charge twice for a purchase whose reply was lost.
+      for (const request of pendingRequests.values()) {
         if (request.playerId === get().player?.id && request.payload.roomId === room?.id
           && request.payload.gameId === room?.game?.gameId) {
           socket.send(JSON.stringify({ type: 'GAME_COMMAND', payload: request.payload }))
@@ -429,20 +444,42 @@ function connect(set: (partial: Partial<Store>) => void, get: () => Store) {
       }
     }
     if (message.type === 'ROOM_STATE' && get().room?.id === message.payload.id) {
+      roomRevision = Number.isSafeInteger(message.revision) ? message.revision : null
+      resyncing = false
       setRoomIfChanged(set, get, message.payload)
+      revisionView = get().room
+    }
+    if (message.type === 'ROOM_UPDATE') {
+      const update = message.payload as RoomUpdate
+      const current = get().room
+      if (!current || current.id !== update.roomId || resyncing) return
+      try {
+        if (roomRevision === null || current !== revisionView || update.baseRevision !== roomRevision || update.revision !== roomRevision + 1) throw new Error('Room update out of sequence')
+        const next = applyRoomOperations(current, update.operations)
+        if (next.id !== current.id) throw new Error('Room changed during update')
+        roomRevision = update.revision
+        setRoomIfChanged(set, get, next)
+        revisionView = get().room
+      } catch {
+        // A stale base is repaired on this connection, never by tearing down a
+        // healthy socket. Old servers can still send ordinary ROOM_STATE frames.
+        resyncing = true
+        sendIfOpen(socket, { type: 'SYNC_ROOM', payload: { roomId: current.id } })
+      }
     }
     if (['KICKED', 'ROOM_DELETED', 'ROOM_REJECTED'].includes(message.type) && get().room?.id === message.payload.roomId) {
       ++navigation
-      pendingThrows.clear()
+      pendingRequests.clear()
       set({ room: null, loading: false, error: message.type === 'ROOM_REJECTED' ? message.payload.message : message.type === 'KICKED' ? 'You were removed from the table' : 'This table was deleted' })
       void get().loadRooms()
     }
     if (message.type === 'ERROR') {
-      pendingThrows.delete(message.payload.requestId)
+      pendingRequests.delete(message.payload.requestId)
       if (!authenticated) disconnect(true)
       else set({ error: message.payload.message })
     }
-    if (message.type === 'THROW_CONFIRMED') pendingThrows.delete(message.payload.requestId)
+    if (message.type === 'THROW_CONFIRMED') pendingRequests.delete(message.payload.requestId)
+    if (message.type === 'COMMAND_CONFIRMED') pendingRequests.delete(message.payload.requestId)
   }
 }
 
@@ -455,20 +492,24 @@ function scheduleReconnect(set: (partial: Partial<Store>) => void, get: () => St
   }, delay)
 }
 
-function retireSocket(socket: WebSocket) {
+function retireSocket(socket: WebSocket, transient = false) {
   socket.onopen = null
   socket.onmessage = null
   socket.onerror = null
   socket.onclose = null
-  socket.close()
+  // Recovery must not look like a deliberate quit: the server would retire the
+  // player's room lease before the replacement connection can resume it.
+  // Browser WebSocket.close accepts only 1000 or application codes 3000–4999.
+  if (transient) socket.close(4000, 'Reconnecting')
+  else socket.close()
 }
 
 function message(error: unknown) { return error instanceof Error ? error.message : 'Something went wrong' }
 
 function setRoomIfChanged(set: (partial: Partial<Store>) => void, get: () => Store, room: RoomView) {
-  for (const [id, request] of pendingThrows) {
+  for (const [id, request] of pendingRequests) {
     if (request.payload.roomId === room.id
-      && (room.game?.gameId !== request.payload.gameId || room.game?.phase !== 'ACTIVE')) pendingThrows.delete(id)
+      && (room.game?.gameId !== request.payload.gameId || room.game?.phase !== 'ACTIVE')) pendingRequests.delete(id)
   }
   if (get().room?.id === room.id) {
     const shared = shareSnapshot(get().room, room)

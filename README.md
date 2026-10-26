@@ -228,6 +228,10 @@ Connection strings belong in server environment variables, never `VITE_*` variab
 
 Game state, presence leases, and payouts live in PostgreSQL, so backend instances do not need shared memory. The client reconnects when a function's WebSocket connection rotates. A disconnected player has a 45-second presence lease; once expired, their removed hand cannot be recovered. Explicitly leaving removes them immediately. Games with one or fewer participants restore pre-game wallets.
 
+Connections stay open until the host closes them; the app adds no four-minute rotation timer. Vercel still closes WebSockets at the function's maximum duration. Recovery preserves the room lease and retries unconfirmed moves with their original receipts. A committed move or purchase can only apply once.
+
+Live clients negotiate incremental room updates after an initial full snapshot. Updates are generated separately from each player's private view, carry a connection-local revision, and keep unchanged hands and history out of subsequent messages. A stale revision requests a full snapshot on the same socket. Slow connections coalesce to the latest room state rather than disconnecting because of a temporary send backlog; older clients continue receiving full snapshots.
+
 Spelling deadlines settle on the next live refresh/request, including after a cold start. No cron or separate realtime service is required by this implementation.
 
 Implicit root claiming is disabled on Vercel. Existing authenticated root accounts retain their privileges, but localhost browser credentials do not automatically transfer to a new hostname. Never publish account/device tokens to move an identity.

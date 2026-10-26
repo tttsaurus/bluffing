@@ -300,8 +300,10 @@ export class LiarsDeckEngine {
       new Set(ids).size === ids.length,
       'A card can only be played once'
     )
+    const selected = new Set(ids)
+    const byId = new Map(hand.map(card => [card.id, card]))
     const played = ids.map((id) => {
-      const card = hand.find((card) => card.id === id)
+      const card = byId.get(id)
       invariant(card, 'One of those cards is not in your hand')
       return card
     })
@@ -322,7 +324,7 @@ export class LiarsDeckEngine {
     const previousPlayer = state.pendingClaim?.playerId
     securePending(state, 'PLAY_PASSED')
     if (previousPlayer && finishIfEmpty(state, previousPlayer)) return
-    state.hands[playerId] = hand.filter((card) => !ids.includes(card.id))
+    state.hands[playerId] = hand.filter((card) => !selected.has(card.id))
     const generation = state.claims.length + 1,
       risk = generation * played.length * 10
     const claim = {

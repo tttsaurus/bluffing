@@ -174,7 +174,7 @@ export class LiarsDeck4FunEngine extends LiarsDeckEngine {
       round && {
         id: round.id,
         stage: round.stage,
-        serverNow: now,
+        serverNow: round.stage === 'ACTIVE' ? now : round.deadline,
         deadline: round.deadline,
         penalty: round.penalty,
         audioUrl: round.questions[viewer]

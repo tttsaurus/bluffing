@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState, type PointerEvent, type RefObject } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type RefObject } from 'react'
 import { suitSymbols } from './gameModes'
 import type { Card } from './types'
 
@@ -35,6 +35,7 @@ export const CardHand = memo(function CardHand({ cards, selected, disabled, onSe
   const frame = useRef(0)
   const suppressClick = useRef(false)
   const cardKey = cards.map(card => card.id).join(',')
+  const selectedIds = useMemo(() => new Set(selected), [selected])
 
   const finish = useCallback((restore = false) => {
     const current = gesture.current
@@ -162,20 +163,24 @@ export const CardHand = memo(function CardHand({ cards, selected, disabled, onSe
       onClickCapture={event => {
         if (suppressClick.current && event.detail !== 0) { event.preventDefault(); event.stopPropagation(); suppressClick.current = false }
       }}>
-      <div className="cards-track">{cards.map(card => <PlayingCard key={card.id} card={card} selected={selected.includes(card.id)} disabled={disabled}
-        onClick={() => onSelectionChange(selected.includes(card.id) ? selected.filter(id => id !== card.id) : [...selected, card.id])} />)}</div>
+      <div className="cards-track" onClick={event => {
+        const card = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-card-id]')
+        const id = card?.dataset.cardId
+        if (!id || card.disabled || disabled) return
+        onSelectionChange(selectedIds.has(id) ? selected.filter(value => value !== id) : [...selected, id])
+      }}>{cards.map(card => <PlayingCard key={card.id} card={card} selected={selectedIds.has(card.id)} disabled={disabled} />)}</div>
     </div>
   </div>
 })
 
-function PlayingCard({ card, selected, disabled, onClick }: { card: Card; selected: boolean; disabled: boolean; onClick: () => void }) {
+const PlayingCard = memo(function PlayingCard({ card, selected, disabled }: { card: Card; selected: boolean; disabled: boolean }) {
   const spell = card.rank === 'SPELL'
   const red = card.suit === 'HEARTS' || card.suit === 'DIAMONDS'
   const joker = card.rank === 'JOKER'
   const suit = spell ? '✦' : suitSymbols[card.suit]
   return <button type="button" data-card-id={card.id} aria-label={spell ? 'Spell card' : joker ? 'Joker (wild card)' : `${card.rank} of ${card.suit.toLowerCase()}`}
     aria-pressed={selected} className={`playing-card ${spell ? 'spell-card' : ''} ${joker ? 'joker-card' : ''} ${red ? 'red' : ''} ${selected ? 'selected' : ''}`}
-    disabled={disabled} onClick={onClick}>
+    disabled={disabled}>
     <span>{spell ? 'SPELL' : card.rank}<small>{suit}</small></span><b>{suit}</b>{spell && <em className="spell-card-label">15 SECOND<br />SPELLING TRAP</em>}<span className="bottom">{spell ? 'SPELL' : card.rank}<small>{suit}</small></span>
   </button>
-}
+})

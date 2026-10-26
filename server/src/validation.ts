@@ -46,6 +46,7 @@ export const socketMessage = z.discriminatedUnion('type', [
     payload: z.object({
       deviceToken: z.string().min(32).max(200),
       sessionId: uuid.optional(),
+      roomUpdates: z.literal(1).optional(),
     }),
   }),
   z.object({

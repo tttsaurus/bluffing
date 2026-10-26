@@ -153,13 +153,15 @@ export class Rooms {
     )
     return { ...rows[0], members, presence: presence.rows }
   }
-  private async save(db: DbClient, room: Aggregate, original: string) {
+  private async save(db: DbClient, room: Aggregate, original: string, previousMembers: Map<string, Membership>) {
     if (room.deleted) {
       await db.query('DELETE FROM rooms WHERE id=$1', [room.id])
       return
     }
     if (JSON.stringify(room) === original) return
     for (const m of room.members) {
+      const previous = previousMembers.get(m.id)
+      if (previous && JSON.stringify(m) === JSON.stringify(previous)) continue
       await db.query(
         `INSERT INTO room_memberships(id,room_id,player_id,seat_index,balance,active,joined_at,equipped_skin,equipped_avatar,wins,current_streak,best_streak,game_start_balance)
         VALUES($1,$2,$3,$4,$5,$6,now(),$7,$8,$9,$10,$11,$12)
@@ -181,12 +183,12 @@ export class Rooms {
           m.game_start_balance,
         ]
       )
-      for (const skin of m.owned_skins)
+      for (const skin of m.owned_skins.filter(skin => !previous?.owned_skins.includes(skin)))
         await db.query(
           'INSERT INTO member_skins VALUES($1,$2) ON CONFLICT DO NOTHING',
           [m.id, skin]
         )
-      for (const avatar of m.owned_avatars)
+      for (const avatar of m.owned_avatars.filter(avatar => !previous?.owned_avatars.includes(avatar)))
         await db.query(
           'INSERT INTO member_avatars VALUES($1,$2) ON CONFLICT DO NOTHING',
           [m.id, avatar]
@@ -213,6 +215,11 @@ export class Rooms {
     return transaction(this.database, async (db) => {
       const room = await this.load(db, id),
         original = JSON.stringify(room)
+      // Game-only mutations need one game-state write, not a rewrite of every
+      // player's wallet and cosmetic ownership over a remote database link.
+      const previousMembers = new Map(room.members.map(m => [m.id, {
+        ...m, owned_skins: [...m.owned_skins], owned_avatars: [...m.owned_avatars],
+      }]))
       if (advance && room.game_state?.phase === 'ACTIVE') {
         const before = gameCashflow(room.game_state),
           rules = engine(room.game_type)
@@ -226,7 +233,7 @@ export class Rooms {
         settle(room, before)
       }
       const result = await action(room, db)
-      await this.save(db, room, original)
+      await this.save(db, room, original, previousMembers)
       return result
     })
   }

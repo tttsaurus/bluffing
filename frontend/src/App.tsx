@@ -280,6 +280,7 @@ function GameTable({ onEffectsPending }: { onEffectsPending: (pending: boolean) 
   const participating = game.hands.some(hand => hand.playerId === player.id)
   const skins = tableSkins(room)
   const risk = game.generation * selected.length * 10
+  const selectedIds = new Set(selected)
   const rewardGeneration = myTurn ? game.generation : game.lastClaim?.generation ?? game.generation
   const rewardCards = myTurn ? selected.length : game.lastClaim?.cardCount ?? 0
   const rewardValue = myTurn ? risk : game.lastClaim?.risk ?? 0
@@ -334,7 +335,7 @@ function GameTable({ onEffectsPending }: { onEffectsPending: (pending: boolean) 
         </section>
       </div>
       <TablePanels room={room} playerId={player.id} generation={rewardGeneration} cards={rewardCards} value={rewardValue}
-        selection={game.hand.filter(card => selected.includes(card.id))} rank={game.targetRank ?? rank} />
+        selection={game.hand.filter(card => selectedIds.has(card.id))} rank={game.targetRank ?? rank} />
     </motion.div>
   )
 }

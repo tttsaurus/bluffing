@@ -7,6 +7,8 @@ import { Rooms } from './rooms.ts'
 import { AppError } from './errors.ts'
 import { socketMessage } from './validation.ts'
 import { ROOM_POLL_MS } from './config.ts'
+import type { RoomView } from '../../shared/contracts.ts'
+import { roomOperations, type RoomUpdate } from '../../shared/roomUpdates.ts'
 
 interface Peer {
   ws: WebSocket
@@ -16,7 +18,11 @@ interface Peer {
   roomId: string | null
   chain: Promise<void>
   lastSent: string
-  lastPong: number
+  lastView: RoomView | null
+  revision: number
+  roomUpdates: boolean
+  pingAt: number | null
+  pingPending: boolean
   lastLeaseAt: number
   leaseRenewal?: Promise<void>
   messages: number
@@ -67,10 +73,6 @@ export class Realtime {
   }
   private send(peer: Peer, type: string, payload: unknown) {
     if (peer.ws.readyState === WebSocket.OPEN) {
-      if (peer.ws.bufferedAmount > 512 * 1024) {
-        peer.ws.terminate()
-        return
-      }
       peer.ws.send(JSON.stringify({ type, payload }))
     }
   }
@@ -91,7 +93,11 @@ export class Realtime {
       roomId: null,
       chain: Promise.resolve(),
       lastSent: '',
-      lastPong: Date.now(),
+      lastView: null,
+      revision: 0,
+      roomUpdates: false,
+      pingAt: null,
+      pingPending: false,
       lastLeaseAt: 0,
       messages: 0,
       windowStarted: Date.now(),
@@ -102,16 +108,17 @@ export class Realtime {
     this.send(peer, 'AUTH_REQUIRED', {})
     const authenticationTimeout = setTimeout(() => {
       if (!peer.account) ws.close(1008, 'Authentication required')
-    }, 12_000)
-    const rotation = process.env.VERCEL ? setTimeout(
-      () => ws.close(1012, 'Reconnect to continue'),
-      240_000
-    ) : undefined
+    }, 30_000)
     ws.on('pong', () => {
-      peer.lastPong = Date.now()
+      peer.pingAt = null
+      peer.pingPending = false
     })
     ws.on('error', () => {})
     ws.on('message', (data) => {
+      // Any incoming frame proves this transport is alive, including while a
+      // large authoritative snapshot is still draining in the other direction.
+      peer.pingAt = null
+      peer.pingPending = false
       if (Date.now() - peer.windowStarted > 1000) {
         peer.windowStarted = Date.now()
         peer.messages = 0
@@ -144,10 +151,11 @@ export class Realtime {
                 account
               )
               peer.account = account
+              peer.roomUpdates = message.payload.roomUpdates === 1
               peer.sessionId = sessionId
               peer.lastLeaseAt = Date.now()
               clearTimeout(authenticationTimeout)
-              this.send(peer, 'CONNECTED', { playerId: account.id })
+              this.send(peer, 'CONNECTED', { playerId: account.id, commandReceipts: 1 })
               return
             }
             if (!peer.account)
@@ -164,6 +172,7 @@ export class Realtime {
                 )
                 peer.roomId = message.payload.roomId
                 peer.lastSent = ''
+                peer.lastView = null
                 if (previous && previous !== peer.roomId)
                   await this.refresh(previous)
                 await this.refresh(peer.roomId)
@@ -185,7 +194,12 @@ export class Realtime {
                 // the buyer mistake it for a failed purchase and pay again.
                 await this.refresh(peer.roomId).catch(error => console.error('Throw broadcast failed', error))
                 this.send(peer, 'THROW_CONFIRMED', { requestId })
-              } else await this.refresh(peer.roomId)
+              } else {
+                // A committed play remains committed even if its broadcast
+                // fails. Its stable receipt makes a lost reply safe to retry.
+                await this.refresh(peer.roomId).catch(error => console.error('Command broadcast failed', error))
+                if (requestId && message.payload.action !== 'SPELL_DRAFT') this.send(peer, 'COMMAND_CONFIRMED', { requestId })
+              }
             } else if (message.type === 'LEAVE_ROOM') {
               const previous = peer.roomId
               await this.rooms.leave(peer.sessionId, peer.connectionId)
@@ -219,7 +233,6 @@ export class Realtime {
     })
     ws.on('close', (code) => {
       clearTimeout(authenticationTimeout)
-      clearTimeout(rotation)
       this.peers.delete(peer)
       if (!this.peers.size) {
         clearInterval(this.poller)
@@ -227,9 +240,11 @@ export class Realtime {
         this.poller = undefined
         this.heartbeats = undefined
       }
-      // Rotation preserves the lease; deliberate close/quit retires it. A lost
+      // Server restarts preserve the lease; deliberate close/quit retires it. A lost
       // network is considered offline only when its 45-second heartbeat expires.
-      if (code === 1006 || code === 1012) return
+      // Browser JS can send only 1000 or application codes 3000–4999.
+      // 4000 is our recoverable transport close; 1012 is used by the server.
+      if (code === 1006 || code === 1012 || code === 4000) return
       const retirement = peer.chain
         .then(async () => {
           if (peer.account) {
@@ -253,13 +268,30 @@ export class Realtime {
           console.error('Room refresh failed', error)
         )
     }, ROOM_POLL_MS)
+    let previousHeartbeat = Date.now()
     this.heartbeats ??= setInterval(() => {
+      const now = Date.now()
+      // A paused/busy instance must allow the event loop to process pongs
+      // before deciding every connection died during the pause.
+      const delayed = now - previousHeartbeat > 20_000
+      previousHeartbeat = now
       for (const peer of this.peers) {
-        if (Date.now() - peer.lastPong > 30_000) {
+        if (peer.ws.readyState !== WebSocket.OPEN) continue
+        if (delayed) peer.pingAt = null
+        if (peer.pingAt !== null && now - peer.pingAt > 30_000) {
           peer.ws.terminate()
           continue
         }
-        peer.ws.ping()
+        if (peer.pingAt === null && !peer.pingPending) {
+          peer.pingPending = true
+          // A ping queued behind a large snapshot has not reached the client.
+          // Start its timeout only after the transport has flushed the frame.
+          peer.ws.ping((error?: Error) => {
+            if (!peer.pingPending) return
+            peer.pingPending = false
+            if (!error && peer.ws.readyState === WebSocket.OPEN) peer.pingAt = Date.now()
+          })
+        }
         if (!peer.account) continue
         void this.renewLease(peer).catch(error => {
           if (error instanceof AppError && error.status === 401) peer.ws.close(1008, 'Live session expired')
@@ -298,11 +330,25 @@ export class Realtime {
       const room = await this.rooms.aggregate(roomId)
       for (const peer of peers)
         try {
+          // Coalesce snapshots while a slow link drains. The next poll sends
+          // the latest view; temporary backpressure is not a lost connection.
+          if (peer.roomId !== roomId || !this.peers.has(peer) || peer.ws.readyState !== WebSocket.OPEN || peer.ws.bufferedAmount > 512 * 1024) continue
           const view = this.rooms.project(room, peer.account!),
             serialized = JSON.stringify(view)
           if (serialized !== peer.lastSent) {
-            this.send(peer, 'ROOM_STATE', view)
+            const revision = peer.revision + 1
+            const full = `{"type":"ROOM_STATE","revision":${revision},"payload":${serialized}}`
+            let encoded = full
+            if (peer.roomUpdates && peer.lastView) {
+              const update: RoomUpdate = { roomId, baseRevision: peer.revision, revision,
+                operations: roomOperations(peer.lastView, view) }
+              const patch = JSON.stringify({ type: 'ROOM_UPDATE', payload: update })
+              if (Buffer.byteLength(patch) < Buffer.byteLength(full)) encoded = patch
+            }
+            peer.ws.send(encoded)
             peer.lastSent = serialized
+            peer.lastView = view
+            peer.revision = revision
           }
         } catch (error) {
           if (error instanceof AppError) {
@@ -317,6 +363,7 @@ export class Realtime {
     } catch (error) {
       if (error instanceof AppError && error.status === 404) {
         for (const peer of peers) {
+          if (peer.roomId !== roomId) continue
           this.send(peer, 'ROOM_DELETED', { roomId })
           peer.roomId = null
         }
