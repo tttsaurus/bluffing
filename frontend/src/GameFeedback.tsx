@@ -115,9 +115,13 @@ export function RoundFeedback() {
   }, [event])
   if (!room || !player) return null
   const copy = event && outcomeCopy(event, player.id, id => playerName(room, id))
-  return <div className="verdict-layer"><AnimatePresence>{event && copy && <motion.aside
+  // Finish the outgoing verdict before mounting its replacement in this fixed slot.
+  // Overlapping normal-flow cards stack vertically and snap up when the first exits.
+  return <div className="verdict-layer"><AnimatePresence mode="wait">{event && copy && <motion.aside
     className={`verdict-card verdict-${copy.tone}`} key={`${game?.gameId}-${event.id}`} role="status" aria-live="polite"
-    initial={{ opacity: 0, y: reduceMotion ? 0 : -28, scale: reduceMotion ? 1 : .88 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: reduceMotion ? 0 : -12 }} transition={{ type: 'spring', damping: 19, stiffness: 270 }}>
+    initial={{ opacity: reduceMotion ? 1 : 0, y: reduceMotion ? 0 : -12 }} animate={{ opacity: 1, y: 0 }}
+    exit={{ opacity: 0, y: reduceMotion ? 0 : -8, transition: { duration: reduceMotion ? 0 : .16, ease: 'easeOut' } }}
+    transition={{ duration: reduceMotion ? 0 : .24, ease: [.22, 1, .36, 1] }}>
     <div className="verdict-stamp" aria-hidden="true">{copy.mark}</div>
     <div className="verdict-content"><span className="verdict-label">{event.penaltyMode === 'SPELLING' ? 'SPELLING CHALLENGE' : event.type.startsWith('CHECK_') ? 'TRUTH CHECK · VERDICT' : event.type === 'PLAY_VOIDED' ? 'REWARD CANCELLED' : 'REWARD CONFIRMED'}</span><h2>{copy.title}</h2><p>{copy.detail}</p>
       {event.challengerId === player.id && event.revealedCards.length > 0 && <><p className="checked-rank">Claimed {event.declaredRank}s · revealed to you</p><div className="revealed-cards" aria-label="Checked cards">{event.revealedCards.map(card => <span key={card.id} className={card.suit === 'HEARTS' || card.suit === 'DIAMONDS' ? 'red' : ''}>{card.rank}{suitSymbols[card.suit]}</span>)}</div></>}
