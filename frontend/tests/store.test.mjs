@@ -432,7 +432,7 @@ test('waiting room never renders game wallets or payout overlay', () => {
   const app = readFileSync(new URL('../src/App.tsx',import.meta.url),'utf8')
   const waiting = app.slice(app.indexOf('function WaitingRoom()'),app.indexOf('function PlayerRow('))
   assert.doesNotMatch(waiting,/Wallets|RoundFeedback|event-log/)
-  const table = app.slice(app.indexOf('function GameTable()'),app.indexOf('function PlayingCard('))
+  const table = app.slice(app.indexOf('function GameTable('),app.indexOf('function PlayingCard('))
   assert.match(table,/<Wallets /)
   assert.match(table,/<RoundFeedback \/>/)
 })

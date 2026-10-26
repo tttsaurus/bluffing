@@ -1,6 +1,7 @@
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { PlayerAvatar } from './PlayerAvatar'
 import { useGameStore } from './store'
+import { recentActions } from './presentation'
 import type { RoomView } from './types'
 
 function PlayerName({ room, id, showTag = true }: { room: RoomView; id: string | null; showTag?: boolean }) {
@@ -11,7 +12,7 @@ function PlayerName({ room, id, showTag = true }: { room: RoomView; id: string |
 
 export function TableActivity({ room, myTurn }: { room: RoomView; myTurn: boolean }) {
   const game = room.game!
-  const latestPlay = game.plays?.at(-1)
+  const latestPlay = recentActions(game).at(-1)
   const reduceMotion = useReducedMotion()
   const turnKey = `${game.currentPlayerId}-${latestPlay?.id ?? 0}-${game.generation}-${game.consecutiveFolds}`
   return <>
@@ -20,8 +21,8 @@ export function TableActivity({ room, myTurn }: { room: RoomView; myTurn: boolea
         initial={{ opacity: 0, y: reduceMotion ? 0 : 22, scale: reduceMotion ? 1 : .85 }}
         animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: reduceMotion ? 0 : -14 }}
         transition={{ type: 'spring', stiffness: 260, damping: 22 }}>
-        <span className="play-announcement-player"><PlayerName room={room} id={latestPlay.playerId} /> <span>played</span></span>
-        <strong className="play-announcement-claim">{latestPlay.cardCount} <span>×</span> {latestPlay.declaredRank}</strong>
+        <span className="play-announcement-player"><PlayerName room={room} id={latestPlay.playerId} /> <span>{latestPlay.type === 'FOLD' ? 'folded' : latestPlay.type === 'CHALLENGE' ? 'called a truth check' : 'played'}</span></span>
+        {latestPlay.type === 'PLAY' && <strong className="play-announcement-claim">{latestPlay.cardCount} <span>×</span> {latestPlay.declaredRank}</strong>}
       </motion.div> : <div className="table-play-empty">No cards played yet · Open the round</div>}</AnimatePresence>
     </div>
     <div className="your-turn-anchor">
@@ -46,11 +47,11 @@ export function TableSeats({ room, playerId }: { room: RoomView; playerId: strin
   return <ol className="table-seats" aria-label="Players around the table">{seats.map((hand, index) => {
     const member = room.players.find(member => member.id === hand.playerId)
     const angle = Math.PI / 2 + index * Math.PI * 2 / Math.max(1, seats.length)
-    const current = !spellingRunning && game.currentPlayerId === hand.playerId
+    const current = game.phase === 'ACTIVE' && !spellingRunning && game.currentPlayerId === hand.playerId
     const self = hand.playerId === playerId
     const lastNonFolded = game.lastNonFoldedPlayerId === hand.playerId
     const status = spellingRunning ? 'SPELLING' : current ? 'THINKING…' : member?.presence === 'OFFLINE' ? 'OFFLINE' : null
-    return <li key={hand.playerId} className={`table-seat ${current ? 'current' : ''} ${self ? 'self' : ''} ${lastNonFolded ? 'last-non-folded' : ''}`}
+    return <li key={hand.playerId} data-player-id={hand.playerId} className={`table-seat ${current ? 'current' : ''} ${self ? 'self' : ''} ${lastNonFolded ? 'last-non-folded' : ''}`}
       style={self ? undefined : { left: `${50 + 44 * Math.cos(angle)}%`, top: `${50 + 43 * Math.sin(angle)}%` }}
       aria-current={current ? 'step' : undefined}>
       {lastNonFolded && <span className="seat-non-folded-marker" aria-label="Last non-folded player">LAST NON-FOLDED</span>}

@@ -103,7 +103,8 @@ for (const type of [
     fold(state, a)
     assert.equal(state.earnings[a], 10)
     assert.equal(state.pool.length, 0)
-    assert.equal(state.plays.length, 0)
+    assert.equal(state.plays.length, 1)
+    assert.deepEqual(state.actions?.map(action => action.type), ['PLAY', 'FOLD', 'FOLD'])
     assert.equal(state.pendingClaim, null)
   })
   test(`${type} inherits classic challenge privacy, rewards and non-folded marker`, () => {
@@ -259,13 +260,14 @@ test('a fold is not a verdict: pending reward is paid only when replaced', () =>
   assert.equal(state.earnings[a], 10)
   assert.equal(state.pendingClaim?.risk, 20)
 })
-test('all-player fold cycle discards pool, clears recent plays, and pays exactly once', () => {
+test('all-player fold cycle discards pool, retains recent actions, and pays exactly once', () => {
   const { state } = fixture()
   play(state, a)
   fold(state, b)
   fold(state, a)
   assert.equal(state.pool.length, 0)
-  assert.equal(state.plays.length, 0)
+  assert.equal(state.plays.length, 1)
+  assert.deepEqual(state.actions?.map(action => action.type), ['PLAY', 'FOLD', 'FOLD'])
   assert.equal(state.earnings[a], 10)
   assert.equal(state.hands[a].length, 2)
   assert.equal(state.hands[b].length, 3)
@@ -510,4 +512,36 @@ test('a final SPELL does not win before spelling resolution', () => {
     )
   assert.equal(state.winnerId, a)
   assert.equal(state.phase, 'FINISHED')
+})
+
+test('action log identifies each actor, survives old saved deals, and never contains private card faces', () => {
+  const { state, rules } = fixture('LIARS_DECK', [a, b, c])
+  delete state.actions
+  play(state, a, 'A', [state.hands[a][1]])
+  fold(state, b)
+  challenge(state, c)
+  for (const viewer of [a, b, c, 'spectator']) {
+    const view = rules.view(state, viewer)
+    assert.deepEqual(view.actions?.map(action => [action.id, action.type, action.playerId]), [
+      [1, 'PLAY', a], [2, 'FOLD', b], [3, 'CHALLENGE', c],
+    ])
+    assert.equal(view.actions?.[2].playId, view.plays?.[0].id)
+    assert.equal(JSON.stringify(view.actions).includes('revealedCards'), false)
+    assert.equal(view.plays?.[0].revealedCards.length, viewer === c ? 1 : 0)
+  }
+})
+
+test('action and play history remain bounded with increasing ids across pool resets', () => {
+  const { state } = fixture()
+  for (let index = 0; index < 55; index++) {
+    state.hands[a].push(card('A'))
+    state.currentIndex = 0
+    play(state, a)
+    fold(state, b)
+    fold(state, a)
+  }
+  assert.equal(state.actions?.length, 50)
+  assert.equal(state.actions?.at(-1)?.id, 165)
+  assert.equal(state.plays.length, 50)
+  assert.equal(state.plays.at(-1)?.id, 55)
 })

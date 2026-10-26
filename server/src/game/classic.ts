@@ -90,6 +90,23 @@ function clearPool(state: GameState) {
   state.consecutiveFolds = 0
   state.pendingClaim = null
 }
+function recordAction(state: GameState, type: 'PLAY' | 'FOLD' | 'CHALLENGE', playerId: string) {
+  // Optional for deals persisted before the action log was introduced.
+  const actions = state.actions ??= (type === 'PLAY' ? state.plays.slice(0, -1) : state.plays).map(play => ({
+    id: play.id, type: 'PLAY' as const, playerId: play.playerId, playId: play.id,
+    cardCount: play.cardCount, declaredRank: play.declaredRank,
+  }))
+  const play = state.plays.at(-1)
+  actions.push({
+    id: (actions.at(-1)?.id ?? 0) + 1,
+    type,
+    playerId,
+    playId: type === 'FOLD' ? undefined : play?.id,
+    cardCount: type === 'FOLD' ? 0 : play?.cardCount ?? 0,
+    declaredRank: state.targetRank,
+  })
+  if (actions.length > 50) actions.shift()
+}
 export function finishIfEmpty(state: GameState, playerId: string) {
   if (state.hands[playerId]?.length !== 0) return false
   state.winnerId = playerId
@@ -227,6 +244,7 @@ export class LiarsDeckEngine {
       earnings: {},
       outcomes: [],
       plays: [],
+      actions: [],
       events: [
         `New game · ${deckCount} deck${deckCount === 1 ? '' : 's'} · ${handSize} cards each`
       ],
@@ -319,6 +337,7 @@ export class LiarsDeckEngine {
       revealedCards: []
     })
     if (state.plays.length > 50) state.plays.shift()
+    recordAction(state, 'PLAY', playerId)
     state.pool.push(...played)
     state.consecutiveFolds = 0
     event(
@@ -333,6 +352,7 @@ export class LiarsDeckEngine {
       'The pool initializer must play at least one card'
     )
     state.consecutiveFolds++
+    recordAction(state, 'FOLD', state.order[state.currentIndex])
     event(state, 'A player folded')
     if (
       state.pendingClaim &&
@@ -343,7 +363,6 @@ export class LiarsDeckEngine {
       securePending(state, 'POOL_PASSED')
       finishIfEmpty(state, candidate)
       clearPool(state)
-      state.plays = []
       return
     }
     if (state.consecutiveFolds >= state.order.length) {
@@ -353,7 +372,6 @@ export class LiarsDeckEngine {
         'Everyone folded · pool vanished · final pending play paid'
       )
       clearPool(state)
-      state.plays = []
       state.initializerIndex = state.currentIndex
     } else
       state.currentIndex = (state.currentIndex + 1) % state.order.length
@@ -384,6 +402,7 @@ export class LiarsDeckEngine {
       claim.cards
     )
     resolvePlay(state, truth ? 'TRUTH' : 'LIE', challenger, claim.cards)
+    recordAction(state, 'CHALLENGE', challenger)
     state.hands[recipient].push(...state.pool)
     sort(state.hands[recipient])
     clearPool(state)
@@ -476,6 +495,7 @@ export class LiarsDeckEngine {
       events: [...state.events],
       winnerId: state.winnerId,
       participants: [...state.participants],
+      actions: state.actions && structuredClone(state.actions),
       pendingClaim: claimView(state.pendingClaim),
       earnings: state.participants.map((playerId) => ({
         playerId,

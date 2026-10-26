@@ -68,6 +68,8 @@ export interface SpellingView {
   }[]
 }
 export interface GameView {
+  /** Ordered public actions. Card faces stay in the viewer-filtered plays list. */
+  actions?: TableAction[]
   spelling?: SpellingView | null
   lastNonFoldedPlayerId?: string | null
   gameId: string
@@ -98,6 +100,14 @@ export interface GameView {
     revealedCards: Card[]
   }[]
   outcomes: GameOutcome[]
+}
+export interface TableAction {
+  id: number
+  type: 'PLAY' | 'FOLD' | 'CHALLENGE'
+  playerId: string
+  playId?: number
+  cardCount: number
+  declaredRank: string | null
 }
 export interface RoomSummary {
   id: string

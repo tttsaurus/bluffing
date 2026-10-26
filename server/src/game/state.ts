@@ -64,6 +64,7 @@ export interface GameState {
   earnings: Record<string, number>
   outcomes: GameOutcome[]
   plays: NonNullable<GameView['plays']>
+  actions?: GameView['actions']
   events: string[]
   winnerId: string | null
   lastNonFoldedPlayerId: string | null

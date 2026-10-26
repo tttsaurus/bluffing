@@ -1,4 +1,11 @@
-import type { GameOutcome, GameView, PlayerRecord, RoomView, SkinId } from './types'
+import type { GameOutcome, GameView, PlayerRecord, RoomView, SkinId, TableAction } from './types'
+
+export function recentActions(game: GameView): TableAction[] {
+  // Older servers and saved deals may only have card-play history.
+  if (game.actions?.length) return game.actions
+  return (game.plays ?? []).map(play => ({ id: play.id, type: 'PLAY', playerId: play.playerId,
+    playId: play.id, cardCount: play.cardCount, declaredRank: play.declaredRank }))
+}
 
 export const skinNames: Record<SkinId, string> = { CLASSIC: 'House deck', AURORA: 'Aurora', SUPERNOVA: 'Supernova', PRISM: 'Prism' }
 

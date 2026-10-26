@@ -22,7 +22,11 @@ test('eight avatar seats, duplicate identity tags, wallet and hand remain usable
   const seats = page.getByRole('list', { name: 'Players around the table' })
   await expect(seats.locator('.seat-avatar')).toHaveCount(8)
   for (const player of players) await expect(seats.getByText(`#${player.identityTag}`, { exact: true })).toBeVisible()
-  await expect(seats.locator('.current')).toContainText('THINKING…')
+  await expect(seats.locator('.current .seat-thinking')).toContainText('THINKING')
+  await expect(seats.locator('.current .thinking-dots i')).toHaveCount(3)
+  const thinking = (await seats.locator('.self .seat-thinking').boundingBox())!
+  expect(thinking.x).toBeGreaterThanOrEqual(0)
+  expect(thinking.x + thinking.width).toBeLessThanOrEqual(page.viewportSize()!.width)
   await expect(seats.locator('.last-non-folded')).toContainText('#tag03')
   await expect(page.getByRole('button', { name: 'Stop deal' })).toBeVisible()
   const hand = await page.getByLabel('Your hand', { exact: true }).boundingBox()
@@ -32,6 +36,10 @@ test('eight avatar seats, duplicate identity tags, wallet and hand remain usable
   const topName = await seats.locator('.table-seat').nth(4).locator('strong').boundingBox()
   expect(pool!.y).toBeGreaterThanOrEqual(topName!.y + topName!.height)
   const selfAvatar = await seats.locator('.self .seat-avatar').boundingBox()
+  if (page.viewportSize()!.width <= 600) {
+    const neighborName = (await seats.locator('.table-seat').nth(1).locator('strong').boundingBox())!
+    expect(selfAvatar!.y).toBeGreaterThanOrEqual(neighborName.y + neighborName.height)
+  }
   const rankPicker = await page.getByRole('combobox', { name: 'DECLARE AS' }).boundingBox()
   expect(rankPicker!.x).toBeGreaterThanOrEqual(selfAvatar!.x + selfAvatar!.width)
   for (const label of await seats.locator('.table-seat:not(.self) > strong').all()) {

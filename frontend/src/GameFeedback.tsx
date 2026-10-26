@@ -1,7 +1,7 @@
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
 import { useGameStore } from './store'
-import { freshOutcomes, gameWallet, outcomeCopy, shouldNotifyOutcome, turnOrder } from './presentation'
+import { freshOutcomes, gameWallet, outcomeCopy, recentActions, shouldNotifyOutcome, turnOrder } from './presentation'
 import type { GameOutcome, RoomView } from './types'
 import { suitSymbols } from './gameModes'
 
@@ -127,18 +127,26 @@ export function RoundFeedback() {
 }
 
 export function PlayHistory({ room }: { room: RoomView }) {
-  const plays = [...(room.game?.plays ?? [])].reverse()
+  const actions = room.game ? [...recentActions(room.game)].reverse() : []
   const labels = { PENDING: 'Awaiting check', PASSED: 'Accepted', TRUTH: 'Verified true', LIE: 'Bluff caught', VOIDED: 'Cancelled' }
   return <section className="play-history" aria-label="Recent plays">
     <header><h3>Recent plays</h3></header>
-    {plays.length === 0 ? <p>No cards played yet.</p> : <ol>{plays.map(play => <li key={play.id}>
-      <div className="play-history-player"><small>#{play.id}</small><strong>{playerName(room, play.playerId)}</strong></div>
-      <div className="play-history-claim"><b>{play.cardCount} × {play.declaredRank}</b><span>claimed</span></div>
-      <div className="play-history-cards" aria-label={play.revealedCards.length ? 'Cards revealed to you' : play.cardCount + ' hidden cards'}>
-        {play.revealedCards.length ? play.revealedCards.map(card => <span key={card.id} className={card.suit === 'HEARTS' || card.suit === 'DIAMONDS' ? 'red' : ''}>{card.rank}{suitSymbols[card.suit]}</span>)
-          : <><span className="hidden-card">?</span><small>× {play.cardCount}</small></>}
-      </div>
-      <span className={'play-status status-' + play.status.toLowerCase()}>{labels[play.status]}</span>
-    </li>)}</ol>}
+    {actions.length === 0 ? <p>No cards played yet.</p> : <ol>{actions.map(action => {
+      const play = room.game?.plays?.find(play => play.id === action.playId)
+      const folded = action.type === 'FOLD'
+      const checked = action.type === 'CHALLENGE'
+      return <li key={action.id} className={folded ? 'history-fold' : checked ? 'history-check' : ''}>
+        <div className="play-history-player"><small>#{action.id}</small><strong>{playerName(room, action.playerId)}</strong></div>
+        {folded ? <><div className="play-history-claim"><b>Folded</b><span>No cards played</span></div><span className="play-status status-fold">FOLD</span></>
+          : <>
+            <div className="play-history-claim"><b>{checked ? 'Truth check' : `${action.cardCount} × ${action.declaredRank}`}</b><span>{checked ? `Checked ${action.cardCount} × ${action.declaredRank}` : 'claimed'}</span></div>
+            <div className="play-history-cards" aria-label={play?.revealedCards.length ? 'Cards revealed to you' : action.cardCount + ' hidden cards'}>
+              {play?.revealedCards.length ? play.revealedCards.map(card => <span key={card.id} className={card.suit === 'HEARTS' || card.suit === 'DIAMONDS' ? 'red' : ''}>{card.rank}{suitSymbols[card.suit]}</span>)
+                : <><span className="hidden-card">?</span><small>× {action.cardCount}</small></>}
+            </div>
+            {play && <span className={'play-status status-' + play.status.toLowerCase()}>{labels[play.status]}</span>}
+          </>}
+      </li>
+    })}</ol>}
   </section>
 }

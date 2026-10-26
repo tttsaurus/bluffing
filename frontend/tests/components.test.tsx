@@ -112,6 +112,19 @@ describe('game UI', () => {
     expect(screen.queryByRole('list')).toBeNull()
   })
 
+  it('includes folds in newest-first history without inventing a card claim', () => {
+    render(<PlayHistory room={room({ game: game({ poolSize: 0, actions: [
+      { id: 1, type: 'PLAY', playerId: self.id, playId: 1, declaredRank: 'A', cardCount: 2 },
+      { id: 2, type: 'FOLD', playerId: other.id, declaredRank: 'A', cardCount: 0 },
+    ], plays: [{ id: 1, playerId: self.id, declaredRank: 'A', cardCount: 2, status: 'PASSED', revealedCards: [] }] }) })} />)
+    const entries = screen.getAllByRole('listitem')
+    expect(within(entries[0]).getByText('Folded')).toBeTruthy()
+    expect(within(entries[0]).getByText('No cards played')).toBeTruthy()
+    expect(within(entries[0]).queryByLabelText(/hidden cards/)).toBeNull()
+    expect(within(entries[1]).getByText('2 × A')).toBeTruthy()
+    expect(within(entries[1]).getByText('Accepted')).toBeTruthy()
+  })
+
   it('does not replay old verdicts or show another player’s deposit notification', () => {
     useGameStore.setState({ room: room({ game: game({ outcomes: [outcome()] }) }) })
     render(<RoundFeedback />)

@@ -8,9 +8,10 @@ import { SpellingChallenge } from './SpellingChallenge'
 import { DeckShop } from './DeckShop'
 import { Modal } from './Modal'
 import { Leaderboards } from './Leaderboards'
-import { skinNames, tableSkins } from './presentation'
+import { recentActions, skinNames, tableSkins } from './presentation'
 import { PlayHistory, RoundFeedback, Wallets } from './GameFeedback'
 import { TableActivity, TableSeats } from './TableActivity'
+import { TableActionEffects } from './TableActionEffects'
 import { gameModes, ranks, suitSymbols } from './gameModes'
 import { FourFunRules, PlusRules } from './PlusRules'
 
@@ -151,8 +152,21 @@ function RoomCard({ room, index, onJoin, onDelete, canDelete, onInspect, disable
 
 function Room() {
   const room = useGameStore(s => s.room)
+  const game = room?.game
+  const [visibleGameId, setVisibleGameId] = useState(game?.phase === 'ACTIVE' ? game.gameId : null)
+  const [effectsPending, setEffectsPending] = useState(false)
+  useEffect(() => {
+    if (game?.phase === 'ACTIVE') { setVisibleGameId(game.gameId); return }
+    if (game?.phase === 'FINISHED' && game.gameId === visibleGameId) {
+      // Let the final throw / truth-check reveal finish before returning to setup.
+      if (effectsPending) return
+      const timer = window.setTimeout(() => setVisibleGameId(null), 350)
+      return () => window.clearTimeout(timer)
+    }
+    setVisibleGameId(null)
+  }, [game?.gameId, game?.phase, visibleGameId, effectsPending])
   if (!room) return null
-  return room.game?.phase === 'ACTIVE' ? <GameTable key={room.game.gameId} /> : <WaitingRoom />
+  return game && (game.phase === 'ACTIVE' || game.gameId === visibleGameId) ? <GameTable key={game.gameId} onEffectsPending={setEffectsPending} /> : <WaitingRoom />
 }
 
 function TopBar({ showRoomType = false }: { showRoomType?: boolean }) {
@@ -245,12 +259,13 @@ function TransientMatchResult({ title, description }: { title: string; descripti
   </motion.div>}</AnimatePresence>
 }
 
-function GameTable() {
+function GameTable({ onEffectsPending }: { onEffectsPending: (pending: boolean) => void }) {
   const { room, player, command, connected } = useGameStore()
   const [selected, setSelected] = useState<string[]>([])
   const [rank, setRank] = useState('A')
   const game = room?.game
   const handScroll = useRef<HTMLDivElement>(null)
+  const arena = useRef<HTMLDivElement>(null)
   const previousHand = useRef(new Set<string>())
   useEffect(() => {
     const ids = (game?.hand ?? []).map(card => card.id)
@@ -275,24 +290,25 @@ function GameTable() {
       <SpellingChallenge />
       <div className="battle-top">
         <div className="current-play-bar"><TableActivity room={room} myTurn={myTurn} /></div>
-        <details className="history-menu"><summary>Recent plays <span>{game.plays?.length ?? 0}</span></summary><PlayHistory room={room} /></details>
+        <details className="history-menu"><summary>Recent plays <span>{recentActions(game).length}</span></summary><PlayHistory room={room} /></details>
       </div>
       <TopBar />
       <div className="game-layout battle-layout">
         <section className="felt-wrap">
-          <div className="table-arena">
+          <div className="table-arena" ref={arena}>
             <div className={`felt turn-skin-${skins.turn.toLowerCase()}`}>
-              <div className="turn-aura" key={`${game.currentPlayerId}-${skins.turn}`}><CardBack skin={skins.turn} surface /><div className="aura-rings" /></div>
+              <div className="turn-aura"><CardBack skin={skins.turn} surface /><div className="aura-rings" /></div>
               <div className="felt-line" />
-              <AnimatePresence mode="wait">
-                <motion.div className="pool" key={`${game.poolSize}-${game.targetRank}`} initial={{ scale: .85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
-                  {game.poolSize ? <><div className={`card-stack pool-skin-${skins.pool.toLowerCase()}`}>{Array.from({ length: Math.min(4, game.poolSize) }).map((_, i) => <i key={i} style={{ transform: `translate(${i * 3}px, ${-i * 3}px) rotate(${(i - 2) * 4}deg)` }} />)}<CardBack skin={skins.pool} compact /></div>
-                    <strong>{game.poolSize} {game.poolSize === 1 ? 'card' : 'cards'}</strong></>
-                    : <><div className="pool-preview"><CardBack skin={skins.turn} compact /></div><strong>Open the round</strong></>}
-                </motion.div>
-              </AnimatePresence>
+              <motion.div className="pool" initial={{ scale: .85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
+                <div className={game.poolSize ? `card-stack pool-skin-${skins.pool.toLowerCase()}` : 'pool-preview'}>
+                  {game.poolSize > 0 && Array.from({ length: Math.min(4, game.poolSize) }).map((_, i) => <i key={i} style={{ transform: `translate(${i * 3}px, ${-i * 3}px) rotate(${(i - 2) * 4}deg)` }} />)}
+                  <CardBack skin={game.poolSize ? skins.pool : skins.turn} compact />
+                </div>
+                <strong>{game.poolSize ? `${game.poolSize} ${game.poolSize === 1 ? 'card' : 'cards'}` : 'Open the round'}</strong>
+              </motion.div>
             </div>
             <TableSeats room={room} playerId={player.id} />
+            <TableActionEffects room={room} arena={arena} onPendingChange={onEffectsPending} />
             <div className="table-corner-info" aria-label="Hand and game deck information">
               <div className="table-corner-stat deck-count"><span>IN THIS GAME</span><strong>{game.deckCount} {game.deckCount === 1 ? 'DECK' : 'DECKS'}</strong></div>
               {participating && <div className="table-corner-stat hand-count"><span>YOUR HAND</span><strong>{game.hand.length}</strong></div>}

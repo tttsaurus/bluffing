@@ -95,7 +95,7 @@ test(`two browsers create, join, play, truth-check privately and stop ${gameType
     await expect(page.getByRole('list', { name: 'Players around the table' })).toBeVisible()
     await expect(guestPage.getByRole('list', { name: 'Players around the table' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Stop deal' })).toBeVisible()
-    await expect(page.locator('.table-seat.current')).toContainText('THINKING…')
+    await expect(page.locator('.table-seat.current .seat-thinking')).toContainText('THINKING')
     const wallet = await page.getByRole('complementary', { name: 'Reward and wallet' }).boundingBox()
     const hand = await page.getByLabel('Your hand', { exact: true }).boundingBox()
     expect(wallet!.y).toBeGreaterThanOrEqual(hand!.y + hand!.height)
