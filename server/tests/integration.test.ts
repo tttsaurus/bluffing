@@ -8,6 +8,7 @@ import { createPool } from '../src/db.ts'
 import { Identities, tokenHash, type Account } from '../src/identity.ts'
 import { Rooms } from '../src/rooms.ts'
 import { createApplication } from '../src/http.ts'
+import { AppError } from '../src/errors.ts'
 import { migrate, migrationFiles } from '../../scripts/db/migrate.ts'
 import type { GameState } from '../src/game/state.ts'
 import type { GameType } from '../../shared/contracts.ts'
@@ -101,6 +102,126 @@ async function play(id: string, players: { actor: Account }[]) {
   })
   return actor
 }
+
+async function liveClient(app: ReturnType<typeof createApplication>, token: string, roomId: string) {
+  const ws = new WebSocket(`ws://127.0.0.1:${(app.server.address() as AddressInfo).port}/ws`)
+  const events: { type: string; payload: any }[] = []
+  ws.on('message', data => events.push(JSON.parse(data.toString())))
+  async function wait(predicate: (event: typeof events[number]) => boolean) {
+    const previous = events.find(predicate)
+    if (previous) return previous
+    return new Promise<typeof events[number]>((resolve, reject) => {
+      const timeout = setTimeout(() => { cleanup(); reject(new Error('Timed out waiting for live event')) }, 5000)
+      const listener = (data: import('ws').RawData) => {
+        const event = JSON.parse(data.toString())
+        if (predicate(event)) { cleanup(); resolve(event) }
+      }
+      function cleanup() { clearTimeout(timeout); ws.off('message', listener) }
+      ws.on('message', listener)
+    })
+  }
+  await new Promise<void>((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject) })
+  ws.send(JSON.stringify({ type: 'AUTH', payload: { deviceToken: token, sessionId: randomUUID() } }))
+  await wait(event => event.type === 'CONNECTED')
+  ws.send(JSON.stringify({ type: 'SYNC_ROOM', payload: { roomId } }))
+  await wait(event => event.type === 'ROOM_STATE')
+  return { ws, events, wait }
+}
+
+test('live sockets batch lease writes, tolerate temporary database errors and still reject expired sessions', async t => {
+  const f = await start()
+  const previousVercel = process.env.VERCEL
+  delete process.env.VERCEL
+  const timeouts: number[] = []
+  const originalTimeout = globalThis.setTimeout, originalInterval = globalThis.setInterval
+  let heartbeat: (() => void) | undefined
+  t.mock.method(globalThis, 'setTimeout', ((callback: (...args: any[]) => void, delay?: number, ...args: any[]) => {
+    timeouts.push(delay ?? 0)
+    return originalTimeout(callback, delay, ...args)
+  }) as typeof setTimeout)
+  t.mock.method(globalThis, 'setInterval', ((callback: (...args: any[]) => void, delay?: number, ...args: any[]) => {
+    if (delay === 10_000) heartbeat = callback
+    return originalInterval(callback, delay, ...args)
+  }) as typeof setInterval)
+  const app = createApplication(first)
+  let client: Awaited<ReturnType<typeof liveClient>> | undefined
+  try {
+    await new Promise<void>(resolve => app.server.listen(0, '127.0.0.1', resolve))
+    const renewal = t.mock.method(app.rooms, 'heartbeat')
+    client = await liveClient(app, f.players[0].token, f.id)
+    assert.equal(timeouts.includes(240_000), false, 'self-hosted sockets must not rotate on a four-minute timer')
+    await first.query('UPDATE room_memberships SET balance=2500 WHERE room_id=$1', [f.id])
+    const game = await state(f.id)
+    const requests = Array.from({ length: 10 }, () => randomUUID())
+    for (const requestId of requests) client.ws.send(JSON.stringify({ type: 'GAME_COMMAND', payload: {
+      roomId: f.id, gameId: game.gameId, action: 'THROW', item: 'TOMATO', targetId: f.players[1].actor.id, requestId,
+    } }))
+    await client.wait(event => event.type === 'THROW_CONFIRMED' && event.payload.requestId === requests.at(-1))
+    assert.equal(client.events.filter(event => event.type === 'THROW_CONFIRMED').length, 10)
+    assert.equal(renewal.mock.callCount(), 0, 'rapid commands share the fresh presence lease')
+    assert.equal((await roomsA.view(f.id, f.host)).players.find(player => player.id === f.host.id)!.balance, 1500)
+    const now = Date.now()
+    const clock = t.mock.method(Date, 'now', () => now + 11_000)
+    renewal.mock.mockImplementation(async () => { throw new Error('Temporary database outage') })
+    const errors = t.mock.method(console, 'error', () => {})
+    heartbeat!()
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(errors.mock.callCount(), 1)
+    assert.equal(client.ws.readyState, WebSocket.OPEN)
+    renewal.mock.restore()
+    const recovered = randomUUID()
+    client.ws.send(JSON.stringify({ type: 'GAME_COMMAND', payload: {
+      roomId: f.id, gameId: game.gameId, action: 'THROW', item: 'TOMATO', targetId: f.players[1].actor.id, requestId: recovered,
+    } }))
+    await client.wait(event => event.type === 'THROW_CONFIRMED' && event.payload.requestId === recovered)
+    clock.mock.mockImplementation(() => now + 22_000)
+    t.mock.method(app.rooms, 'heartbeat', async () => { throw new AppError(401, 'Session expired') })
+    const closed = new Promise<number>(resolve => client!.ws.once('close', resolve))
+    heartbeat!()
+    assert.equal(await closed, 1008)
+    clock.mock.restore()
+  } finally {
+    if (previousVercel === undefined) delete process.env.VERCEL
+    else process.env.VERCEL = previousVercel
+    client?.ws.close()
+    await app.realtime.close()
+    await new Promise<void>(resolve => app.server.close(() => resolve()))
+  }
+})
+
+test('a committed change during an in-flight refresh publishes immediately without waiting for the poll', async t => {
+  const f = await setup(), app = createApplication(first)
+  let client: Awaited<ReturnType<typeof liveClient>> | undefined
+  let release = () => {}
+  try {
+    await new Promise<void>(resolve => app.server.listen(0, '127.0.0.1', resolve))
+    client = await liveClient(app, f.players[0].token, f.id)
+    let read = () => {}
+    const firstRead = new Promise<void>(resolve => { read = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const aggregate = app.rooms.aggregate.bind(app.rooms)
+    let calls = 0
+    t.mock.method(app.rooms, 'aggregate', async (...args: Parameters<Rooms['aggregate']>) => {
+      const snapshot = await aggregate(...args)
+      if (++calls === 1) { read(); await gate }
+      return snapshot
+    })
+    const polling = app.realtime.refresh(f.id, false)
+    await firstRead
+    const name = `Fresh ${randomUUID().slice(0, 8)}`
+    await first.query('UPDATE rooms SET name=$2,version=version+1 WHERE id=$1', [f.id, name])
+    const committed = app.realtime.refresh(f.id)
+    release()
+    await Promise.all([polling, committed])
+    assert.equal(calls, 2)
+    await client.wait(event => event.type === 'ROOM_STATE' && event.payload.name === name)
+  } finally {
+    release()
+    client?.ws.close()
+    await app.realtime.close()
+    await new Promise<void>(resolve => app.server.close(() => resolve()))
+  }
+})
 
 test('independent instances restore identity, preserve nickname conflicts, and provision one non-root debug bot under contention', async () => {
   const root = await account(true),

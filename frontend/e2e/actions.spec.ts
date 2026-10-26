@@ -136,3 +136,23 @@ test('bursts queue each action and the final truth check finishes before setup r
   await expect(page.locator('.pool-reveal-card')).toHaveText(['?', '?'])
   await expect(page.getByRole('region', { name: 'Players', exact: true })).toBeVisible()
 })
+
+test('Joker, SPELL and two-digit ranks fit inside revealed cards', async ({ page }) => {
+  await page.goto('/')
+  await show(page, room({ game: game({ actions: [] }) }))
+  await expect(page.locator('.table-seat')).toHaveCount(2)
+  await show(page, room({ game: game({
+    actions: [{ id: 1, type: 'CHALLENGE', playerId: self.id, playId: 1, cardCount: 3, declaredRank: 'A' }],
+    plays: [{ ...play, playerId: other.id, cardCount: 3, status: 'TRUTH', challengerId: self.id, revealedCards: [
+      { id: 'joker', rank: 'JOKER', suit: 'JOKER' }, { id: 'spell', rank: 'SPELL', suit: 'SPADES' }, { id: 'ten', rank: '10', suit: 'HEARTS' },
+    ] }],
+  }) }))
+  await expect(page.locator('.pool-reveal-card')).toHaveText(['JOKER✦', 'SPELL♠', '10♥'])
+  for (const rank of await page.locator('.reveal-card-rank').all()) {
+    expect(await rank.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+    const bounds = (await rank.boundingBox())!, card = (await rank.locator('..').boundingBox())!
+    expect(bounds.x).toBeGreaterThanOrEqual(card.x)
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(card.x + card.width)
+  }
+  await page.screenshot({ path: test.info().outputPath('special-card-reveal.png') })
+})

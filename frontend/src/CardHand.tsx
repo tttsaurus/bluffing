@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type PointerEvent, type RefObject } from 'react'
+import { memo, useCallback, useEffect, useRef, useState, type PointerEvent, type RefObject } from 'react'
 import { suitSymbols } from './gameModes'
 import type { Card } from './types'
 
@@ -22,7 +22,7 @@ type Gesture = {
   maxScroll: number
 }
 
-export function CardHand({ cards, selected, disabled, onSelectionChange, scrollRef }: {
+export const CardHand = memo(function CardHand({ cards, selected, disabled, onSelectionChange, scrollRef }: {
   cards: Card[]
   selected: string[]
   disabled: boolean
@@ -34,7 +34,6 @@ export function CardHand({ cards, selected, disabled, onSelectionChange, scrollR
   const gesture = useRef<Gesture | null>(null)
   const frame = useRef(0)
   const suppressClick = useRef(false)
-  const hintId = useId()
   const cardKey = cards.map(card => card.id).join(',')
 
   const finish = useCallback((restore = false) => {
@@ -69,7 +68,8 @@ export function CardHand({ cards, selected, disabled, onSelectionChange, scrollR
     const current = gesture.current
     const container = scrollRef.current
     if (!current || !container || !current.dragging || current.y < current.top - 24 || current.y > current.bottom + 24) return
-    const x = Math.max(current.left + 1, Math.min(current.right - 1, current.x)) + container.scrollLeft - current.scrollStart
+    const position = Math.max(current.left + 1, Math.min(current.right - 1, current.x)) + container.scrollLeft - current.scrollStart
+    const x = Math.max(current.cards[0].left, Math.min(current.cards.at(-1)!.right, position))
     // Later cards cover the right edge of earlier cards in the overlapping hand.
     let index = current.cards.length - 1
     while (index >= 0 && (x < current.cards[index].left || x > current.cards[index].right)) index--
@@ -151,11 +151,10 @@ export function CardHand({ cards, selected, disabled, onSelectionChange, scrollR
   return <div className={`card-hand ${touchSelect ? 'touch-select' : ''} ${dragging ? 'drag-selecting' : ''}`}>
     {cards.length > 0 && <div className="hand-selection-tools">
       <span className="hand-selected-count">{selected.length} selected</span>
-      <span id={hintId} className="hand-drag-hint">Drag cards to select · drag selected cards to clear</span>
       <button type="button" className="hand-drag-toggle" aria-pressed={touchSelect} onClick={() => setTouchSelect(value => !value)}>Drag select</button>
       <span className="hand-touch-hint">{touchSelect ? 'Drag cards to select / clear' : 'Swipe to scroll'}</span>
     </div>}
-    <div ref={scrollRef} className="cards" aria-label="Your hand" aria-describedby={cards.length ? hintId : undefined}
+    <div ref={scrollRef} className="cards" aria-label="Your hand"
       onPointerDown={start} onPointerMove={move} onPointerUp={event => { if (gesture.current?.pointerId === event.pointerId) finish() }}
       onPointerCancel={() => finish(true)}
       onLostPointerCapture={event => { if (event.target === event.currentTarget) finish(true) }}
@@ -167,7 +166,7 @@ export function CardHand({ cards, selected, disabled, onSelectionChange, scrollR
         onClick={() => onSelectionChange(selected.includes(card.id) ? selected.filter(id => id !== card.id) : [...selected, card.id])} />)}</div>
     </div>
   </div>
-}
+})
 
 function PlayingCard({ card, selected, disabled, onClick }: { card: Card; selected: boolean; disabled: boolean; onClick: () => void }) {
   const spell = card.rank === 'SPELL'

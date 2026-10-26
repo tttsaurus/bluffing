@@ -118,9 +118,9 @@ function ActionEffect({ effect: { action, from, to, name, play, skin }, reduced 
             <span className="pool-check-label">TRUTH CHECK · REVEAL</span>
             <div className="pool-reveal-cards">{Array.from({ length: Math.min(action.cardCount, 6) }, (_, index) => {
               const card = play?.revealedCards[index]
-              return <motion.span key={index} className={`pool-reveal-card ${card?.suit === 'HEARTS' || card?.suit === 'DIAMONDS' ? 'red' : ''}`}
+              return <motion.span key={index} className={`pool-reveal-card ${card?.rank === 'JOKER' || card?.rank === 'SPELL' ? 'special-rank' : ''} ${card?.suit === 'HEARTS' || card?.suit === 'DIAMONDS' ? 'red' : ''}`}
                 initial={{ rotateY: reduced ? 0 : 90 }} animate={{ rotateY: 0 }} transition={{ delay: revealDelay + (reduced ? 0 : index * .08), duration: reduced ? 0 : .35 }}>
-                {card ? <>{card.rank}<small>{suitSymbols[card.suit]}</small></> : <span>?</span>}
+                {card ? <><span className="reveal-card-rank">{card.rank}</span><small>{suitSymbols[card.suit]}</small></> : <span>?</span>}
               </motion.span>
             })}</div>
             {action.cardCount > 6 && <small>+{action.cardCount - 6} more cards checked</small>}

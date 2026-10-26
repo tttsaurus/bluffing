@@ -61,16 +61,27 @@ test('drag selects ranges in either direction, paints each card once, and preser
 })
 
 test('edge dragging scrolls through a long hand and selects cards skipped between pointer events', async ({ page }) => {
-  await openHand(page, 18)
+  await openHand(page, 30)
   const start = await point(page, 0)
   const hand = (await page.getByLabel('Your hand', { exact: true }).boundingBox())!
   await page.mouse.move(start.x, start.y)
   await page.mouse.down()
   await page.mouse.move(hand.x + hand.width - 1, start.y, { steps: 2 })
-  await expect.poll(async () => (await selected(page)).length, { timeout: 10_000 }).toBe(18)
+  await expect.poll(async () => (await selected(page)).length, { timeout: 10_000 }).toBe(30)
   await page.mouse.up()
-  await expect(page.locator('.hand-selected-count')).toHaveText('18 selected')
+  await expect(page.locator('.hand-selected-count')).toHaveText('30 selected')
   expect(await page.getByLabel('Your hand', { exact: true }).evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
+})
+
+test('dragging past the last card includes the end of a short centered hand', async ({ page }) => {
+  await openHand(page, 4)
+  const start = await point(page, 0)
+  const hand = (await page.getByLabel('Your hand', { exact: true }).boundingBox())!
+  await page.mouse.move(start.x, start.y)
+  await page.mouse.down()
+  await page.mouse.move(hand.x + hand.width - 1, start.y, { steps: 2 })
+  await page.mouse.up()
+  expect(await selected(page)).toEqual(['card-0', 'card-1', 'card-2', 'card-3'])
 })
 
 test('Escape rolls back a drag and a turn change stops selection', async ({ page }) => {
@@ -116,6 +127,14 @@ test('touch swipes scroll normally and Drag select enables touch range selection
   await swipe({ x: bounds.x + bounds.width - 40, y: bounds.y + bounds.height - 32 }, { x: bounds.x + 50, y: bounds.y + bounds.height - 32 })
   await expect.poll(() => hand.evaluate(element => element.scrollLeft)).toBeGreaterThan(20)
   expect(await selected(page)).toEqual([])
+  // Wait for the native swipe's inertia; a tap during coasting first stops it.
+  let previous = -1, stable = 0
+  await expect.poll(async () => {
+    const position = await hand.evaluate(element => element.scrollLeft)
+    stable = Math.abs(position - previous) < 1 ? stable + 1 : 0
+    previous = position
+    return stable
+  }).toBeGreaterThanOrEqual(2)
   await hand.evaluate(element => { element.scrollLeft = 0 })
   await page.getByRole('button', { name: 'Drag select', exact: true }).tap()
   await expect(page.getByRole('button', { name: 'Drag select', exact: true })).toHaveAttribute('aria-pressed', 'true')

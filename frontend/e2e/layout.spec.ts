@@ -51,8 +51,12 @@ test('eight avatar seats, duplicate identity tags, wallet and hand remain usable
     const announcement = await page.locator('.table-play-empty').boundingBox()
     expect(announcement!.y).toBeGreaterThanOrEqual(header!.y + header!.height)
   }
-  const board = await page.getByRole('complementary', { name: 'Reward and wallet' }).boundingBox()
-  expect(board!.y).toBeGreaterThanOrEqual(hand!.y + hand!.height)
+  const docks = await page.locator('.table-docks').boundingBox()
+  expect(docks!.y).toBeGreaterThanOrEqual(hand!.y + hand!.height)
+  expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 1)).toBe(true)
+  await page.getByRole('button', { name: /Expand reward panel/ }).click()
+  await expect(page.getByLabel('Potential reward: generation 1 times 0 cards, 0 coins')).toBeVisible()
+  await page.getByRole('button', { name: /Collapse reward panel/ }).click()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true)
   await page.screenshot({ path: test.info().outputPath('eight-seat-layout.png'), fullPage: true })
   await page.evaluate(async () => {
@@ -73,6 +77,13 @@ test('eight avatar seats, duplicate identity tags, wallet and hand remain usable
   expect(rankBounds.x).toBeGreaterThanOrEqual(felt.x)
   expect(rankBounds.x + rankBounds.width).toBeLessThanOrEqual(felt.x + felt.width)
   expect(rankBounds.y + rankBounds.height).toBeLessThanOrEqual(felt.y + felt.height)
+  if (page.viewportSize()!.width <= 600) {
+    const count = (await page.locator('.hand-selected-count').boundingBox())!
+    for (const identity of await seats.locator('.self > strong,.self > small').all()) {
+      const bounds = (await identity.boundingBox())!
+      expect(count.x >= bounds.x + bounds.width || count.y >= bounds.y + bounds.height || count.y + count.height <= bounds.y).toBe(true)
+    }
+  }
   await page.screenshot({ path: test.info().outputPath('current-rank.png'), fullPage: true })
   await page.evaluate(async view => {
     const modulePath = '/src/store.ts'

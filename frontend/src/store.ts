@@ -49,6 +49,7 @@ let navigation = 0
 let reconnectTimer: number | undefined
 let connectionTimer: number | undefined
 let reconnectAttempts = 0
+let draftTimer: number | undefined
 type ThrowRequest = { playerId: string; payload: {
   roomId: string; gameId: string; requestId: string; action: 'THROW'; item: ThrowItemId; targetId: string
 } }
@@ -152,7 +153,10 @@ export const useGameStore = create<Store>((set, get) => ({
       if (requestEpoch === identityEpoch) set({ error: message(error), loading: false })
     }
   },
-  reconnect: () => { if (get().player && !get().bootstrapping && !get().connected) connect(set, get) },
+  reconnect: () => {
+    const { player, bootstrapping, connected, socket } = get()
+    if (player && !bootstrapping && !connected && (!socket || socket.readyState > WebSocket.OPEN)) connect(set, get)
+  },
 
   identify: async (displayName) => {
     set({ loading: true, error: null })
@@ -315,7 +319,19 @@ export const useGameStore = create<Store>((set, get) => ({
       set({ error: 'Live connection is not ready yet' })
       return
     }
-    socket.send(JSON.stringify({ type: 'GAME_COMMAND', payload: { roomId: room.id, action, cardIds, declaredRank, spellingId, answer, requestId: crypto.randomUUID(), gameId: room.game?.gameId } }))
+    const payload = { roomId: room.id, action, cardIds, declaredRank, spellingId, answer, requestId: crypto.randomUUID(), gameId: room.game?.gameId }
+    if (action === 'SPELL_DRAFT' || action === 'SPELL_ANSWER') window.clearTimeout(draftTimer)
+    const send = () => {
+      if (get().socket !== socket || !get().connected || get().room?.id !== room.id || get().room?.game?.gameId !== payload.gameId) return
+      if (action === 'SPELL_DRAFT' && (get().room?.game?.spelling?.id !== spellingId || get().room?.game?.spelling?.stage !== 'ACTIVE')) return
+      try { socket.send(JSON.stringify({ type: 'GAME_COMMAND', payload })) }
+      catch { set({ error: 'The connection closed before the move could be sent' }) }
+    }
+    // Send the last second's edits immediately so coalescing cannot postpone
+    // the final draft past the server's auto-submit deadline.
+    const spelling = room.game?.spelling
+    if (action === 'SPELL_DRAFT' && (!spelling || spelling.deadline - spelling.serverNow > 1000 || !Number.isFinite(spelling.deadline))) draftTimer = window.setTimeout(send, 100)
+    else send()
   },
 
   throwItem: (item, targetId) => {
@@ -433,7 +449,7 @@ function connect(set: (partial: Partial<Store>) => void, get: () => Store) {
 function scheduleReconnect(set: (partial: Partial<Store>) => void, get: () => Store, socket: WebSocket | null) {
   if (!get().player || get().socket !== socket) return
   window.clearTimeout(reconnectTimer)
-  const delay = Math.min(1600 * 2 ** Math.min(reconnectAttempts++, 3), 10000)
+  const delay = Math.min(250 * 2 ** Math.min(reconnectAttempts++, 6), 10000)
   reconnectTimer = window.setTimeout(() => {
     if (get().player && get().socket === socket) connect(set, get)
   }, delay)
@@ -454,7 +470,25 @@ function setRoomIfChanged(set: (partial: Partial<Store>) => void, get: () => Sto
     if (request.payload.roomId === room.id
       && (room.game?.gameId !== request.payload.gameId || room.game?.phase !== 'ACTIVE')) pendingThrows.delete(id)
   }
-  if (get().room?.id === room.id && JSON.stringify(get().room) !== JSON.stringify(room)) set({ room })
+  if (get().room?.id === room.id) {
+    const shared = shareSnapshot(get().room, room)
+    if (shared !== get().room) set({ room: shared })
+  }
+}
+
+// Reuse unchanged card hands, avatars and action lists across authoritative
+// snapshots so a wallet update does not repaint the entire table.
+function shareSnapshot<T>(previous: T, next: T): T {
+  if (Object.is(previous, next)) return previous
+  if (!previous || !next || typeof previous !== 'object' || typeof next !== 'object' || Array.isArray(previous) !== Array.isArray(next)) return next
+  const before = previous as Record<string, unknown>, after = next as Record<string, unknown>
+  const keys = Object.keys(after)
+  let unchanged = keys.length === Object.keys(before).length
+  for (const key of keys) {
+    after[key] = shareSnapshot(before[key], after[key])
+    if (!Object.hasOwn(before, key) || after[key] !== before[key]) unchanged = false
+  }
+  return unchanged ? previous : next
 }
 
 function sendIfOpen(socket: WebSocket | null, message: object) {

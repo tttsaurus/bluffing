@@ -17,7 +17,8 @@ interface Peer {
   chain: Promise<void>
   lastSent: string
   lastPong: number
-  polling: boolean
+  lastLeaseAt: number
+  leaseRenewal?: Promise<void>
   messages: number
   windowStarted: number
   pending: number
@@ -28,7 +29,7 @@ export class Realtime {
   private peers = new Set<Peer>()
   private poller: NodeJS.Timeout | undefined
   private heartbeats: NodeJS.Timeout | undefined
-  private refreshing = new Map<string, Promise<void>>()
+  private refreshing = new Map<string, { requested: number; promise: Promise<void> }>()
   private retiring = new Set<Promise<void>>()
   readonly sockets: WebSocketServer
   constructor(
@@ -73,6 +74,14 @@ export class Realtime {
       peer.ws.send(JSON.stringify({ type, payload }))
     }
   }
+  private renewLease(peer: Peer): Promise<void> {
+    if (peer.leaseRenewal) return peer.leaseRenewal
+    if (Date.now() - peer.lastLeaseAt < 10_000) return Promise.resolve()
+    peer.leaseRenewal = this.rooms.heartbeat(peer.sessionId, peer.connectionId)
+      .then(() => { peer.lastLeaseAt = Date.now() })
+      .finally(() => { peer.leaseRenewal = undefined })
+    return peer.leaseRenewal
+  }
   private attach(ws: WebSocket) {
     const peer: Peer = {
       ws,
@@ -83,7 +92,7 @@ export class Realtime {
       chain: Promise.resolve(),
       lastSent: '',
       lastPong: Date.now(),
-      polling: false,
+      lastLeaseAt: 0,
       messages: 0,
       windowStarted: Date.now(),
       pending: 0,
@@ -94,10 +103,10 @@ export class Realtime {
     const authenticationTimeout = setTimeout(() => {
       if (!peer.account) ws.close(1008, 'Authentication required')
     }, 12_000)
-    const rotation = setTimeout(
+    const rotation = process.env.VERCEL ? setTimeout(
       () => ws.close(1012, 'Reconnect to continue'),
       240_000
-    )
+    ) : undefined
     ws.on('pong', () => {
       peer.lastPong = Date.now()
     })
@@ -136,13 +145,14 @@ export class Realtime {
               )
               peer.account = account
               peer.sessionId = sessionId
+              peer.lastLeaseAt = Date.now()
               clearTimeout(authenticationTimeout)
               this.send(peer, 'CONNECTED', { playerId: account.id })
               return
             }
             if (!peer.account)
               throw new AppError(401, 'Authenticate this device first')
-            await this.rooms.heartbeat(peer.sessionId, peer.connectionId)
+            await this.renewLease(peer)
             if (message.type === 'SYNC_ROOM') {
               try {
                 const previous = peer.roomId
@@ -239,7 +249,7 @@ export class Realtime {
           .map((p) => p.roomId)
           .filter((id): id is string => Boolean(id))
       ))
-        void this.refresh(id).catch((error) =>
+        void this.refresh(id, false).catch((error) =>
           console.error('Room refresh failed', error)
         )
     }, ROOM_POLL_MS)
@@ -250,56 +260,68 @@ export class Realtime {
           continue
         }
         peer.ws.ping()
-        if (!peer.account || peer.polling) continue
-        peer.polling = true
-        void this.rooms
-          .heartbeat(peer.sessionId, peer.connectionId)
-          .catch(() => peer.ws.close(1008, 'Live session expired'))
-          .finally(() => {
-            peer.polling = false
-          })
+        if (!peer.account) continue
+        void this.renewLease(peer).catch(error => {
+          if (error instanceof AppError && error.status === 401) peer.ws.close(1008, 'Live session expired')
+          else console.error('Presence renewal temporarily failed', error)
+        })
       }
     }, 10_000)
   }
-  async refresh(roomId: string): Promise<void> {
+  async refresh(roomId: string, afterChange = true): Promise<void> {
     const existing = this.refreshing.get(roomId)
-    if (existing) return existing
-    const job = (async () => {
-      const peers = [...this.peers].filter(
-        (peer) => peer.roomId === roomId && peer.account
-      )
-      if (!peers.length) return
+    if (existing) {
+      if (afterChange) existing.requested++
+      return existing.promise
+    }
+    const job = { requested: 1, promise: Promise.resolve() }
+    job.promise = Promise.resolve().then(async () => {
       try {
-        const room = await this.rooms.aggregate(roomId)
-        for (const peer of peers)
-          try {
-            const view = this.rooms.project(room, peer.account!),
-              serialized = JSON.stringify(view)
-            if (serialized !== peer.lastSent) {
-              this.send(peer, 'ROOM_STATE', view)
-              peer.lastSent = serialized
-            }
-          } catch (error) {
-            if (error instanceof AppError) {
-              this.send(
-                peer,
-                error.status === 403 ? 'KICKED' : 'ROOM_REJECTED',
-                { roomId, message: error.message }
-              )
-              peer.roomId = null
-            } else throw error
-          }
-      } catch (error) {
-        if (error instanceof AppError && error.status === 404) {
-          for (const peer of peers) {
-            this.send(peer, 'ROOM_DELETED', { roomId })
-            peer.roomId = null
-          }
-        } else throw error
+        let published: number
+        do {
+          published = job.requested
+          await this.publish(roomId)
+        } while (published !== job.requested)
+      } finally {
+        this.refreshing.delete(roomId)
       }
-    })().finally(() => this.refreshing.delete(roomId))
+    })
     this.refreshing.set(roomId, job)
-    return job
+    return job.promise
+  }
+  private async publish(roomId: string): Promise<void> {
+    const peers = [...this.peers].filter(
+      (peer) => peer.roomId === roomId && peer.account
+    )
+    if (!peers.length) return
+    try {
+      const room = await this.rooms.aggregate(roomId)
+      for (const peer of peers)
+        try {
+          const view = this.rooms.project(room, peer.account!),
+            serialized = JSON.stringify(view)
+          if (serialized !== peer.lastSent) {
+            this.send(peer, 'ROOM_STATE', view)
+            peer.lastSent = serialized
+          }
+        } catch (error) {
+          if (error instanceof AppError) {
+            this.send(
+              peer,
+              error.status === 403 ? 'KICKED' : 'ROOM_REJECTED',
+              { roomId, message: error.message }
+            )
+            peer.roomId = null
+          } else throw error
+        }
+    } catch (error) {
+      if (error instanceof AppError && error.status === 404) {
+        for (const peer of peers) {
+          this.send(peer, 'ROOM_DELETED', { roomId })
+          peer.roomId = null
+        }
+      } else throw error
+    }
   }
   async close() {
     const processing = [...this.peers].map((peer) => peer.chain)
@@ -310,7 +332,7 @@ export class Realtime {
     await Promise.allSettled([
       ...processing,
       ...this.retiring,
-      ...this.refreshing.values(),
+      ...[...this.refreshing.values()].map(job => job.promise),
     ])
   }
 }

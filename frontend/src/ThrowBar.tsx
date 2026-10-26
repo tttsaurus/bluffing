@@ -4,9 +4,10 @@ import { walletBalances } from './presentation'
 import { useGameStore } from './store'
 import type { RoomView, ThrowItemId } from './types'
 
-export function ThrowBar({ room, playerId }: { room: RoomView; playerId: string }) {
+export function ThrowBar({ room, playerId, open: controlledOpen, onToggle }: { room: RoomView; playerId: string; open?: boolean; onToggle?: () => void }) {
   const { connected, throwItem, error } = useGameStore()
-  const [open, setOpen] = useState(false)
+  const [localOpen, setOpen] = useState(false)
+  const open = controlledOpen ?? localOpen
   const [target, setTarget] = useState('')
   const panelId = useId()
   const game = room.game!
@@ -22,7 +23,7 @@ export function ThrowBar({ room, playerId }: { room: RoomView; playerId: string 
     if (selected) throwItem(item, selected.id)
   }
   return <aside className={`throw-dock ${open ? 'expanded' : ''}`} aria-label="Throwing items">
-    <button className="throw-dock-toggle" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen(value => !value)}>
+    <button className="throw-dock-toggle" aria-expanded={open} aria-controls={panelId} onClick={onToggle ?? (() => setOpen(value => !value))}>
       <span className="throw-dock-emblem" aria-hidden="true">✦</span><strong>THROWABLES</strong>
       <span className="throw-dock-balance">{available.toLocaleString()} <i>◆</i></span>
       <span className="throw-dock-chevron" aria-hidden="true">{open ? '⌄' : '⌃'}</span>

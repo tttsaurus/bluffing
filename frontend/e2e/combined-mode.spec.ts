@@ -54,6 +54,8 @@ test('4 Fun Plus is a separate room choice with both rules, setup and spelling U
   for (const name of ['A of spades', '2 of spades', 'Joker (wild card)', 'Spell card']) {
     await page.getByRole('button', { name, exact: true }).click()
   }
+  await page.getByRole('button', { name: /Expand reward panel/ }).click()
+  await page.getByText('Game rules & selection hints', { exact: true }).click()
   await expect(page.getByText('Straight ready')).toBeVisible()
   await expect(page.getByText('Truthful as: A · 2 · 3 · 4')).toBeVisible()
   await expect(page.locator('.turn-aura, .shader-surface')).toHaveCount(0)

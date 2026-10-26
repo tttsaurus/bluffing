@@ -178,7 +178,7 @@ test('joining works during a disconnect and enters the room after automatic reco
   await f.respond('/api/rooms',[])
   await joining
   assert.equal(f.store.getState().loading,false)
-  f.runTimer(1600)
+  f.runTimer(250)
   f.sockets[1].open(); f.sockets[1].emit('CONNECTED',{playerId:player.id})
   assert.equal(f.store.getState().connected,true)
   assert.deepEqual(f.sockets[1].sent.find(m=>m.type==='SYNC_ROOM').payload,{roomId:room.id})
@@ -192,7 +192,7 @@ test('an open socket that never authenticates times out and gets replaced', asyn
   assert.equal(f.store.getState().connected,false)
   obsoleteClose({code:1006})
   assert.equal(f.timers.length,1)
-  f.runTimer(1600)
+  f.runTimer(250)
   f.sockets[1].open(); f.sockets[1].emit('CONNECTED',{playerId:player.id})
   assert.equal(f.store.getState().connected,true)
   assert.equal(f.timers.length,0)
@@ -203,7 +203,7 @@ test('a handshake stuck in CONNECTING also times out without waiting for a brows
   f.sockets[0].readyState=0
   f.runTimer(12000)
   assert.equal(f.sockets[0].readyState,3)
-  f.runTimer(1600)
+  f.runTimer(250)
   assert.equal(f.sockets.length,2)
 })
 
@@ -211,7 +211,7 @@ test('socket errors reconnect even when no close event arrives', async () => {
   const f = fixture(); await f.identify(false)
   f.sockets[0].onerror({})
   assert.equal(f.sockets[0].readyState,3)
-  f.runTimer(1600)
+  f.runTimer(250)
   assert.equal(f.sockets.length,2)
 })
 
@@ -226,6 +226,51 @@ test('manual retry cancels the old retry instead of spawning competing sockets',
   assert.equal(f.sockets.length,2)
 })
 
+test('visibility and online retries never replace a connection still authenticating', async () => {
+  const f = fixture(); await f.identify(false)
+  f.store.getState().reconnect()
+  f.store.getState().reconnect()
+  assert.equal(f.sockets.length,1)
+  f.sockets[0].emit('CONNECTED',{playerId:player.id})
+  assert.equal(f.store.getState().connected,true)
+})
+
+test('room updates reuse unchanged card hands and discard removed private fields', async () => {
+  const f = fixture(); await f.identify()
+  const snapshot = {...room,players:[{id:player.id,balance:500}],game:{gameId:'deal',phase:'ACTIVE',hand:[{id:'card',rank:'A'}],plays:[{id:1,revealedCards:[{id:'secret',rank:'K'}]}]}}
+  f.store.setState({room:snapshot})
+  f.sockets[0].emit('ROOM_STATE',snapshot)
+  assert.equal(f.store.getState().room,snapshot)
+  f.sockets[0].emit('ROOM_STATE',{...snapshot,players:[{id:player.id,balance:400}],game:{...snapshot.game,plays:[{id:1,revealedCards:[]}]}})
+  const updated = f.store.getState().room
+  assert.equal(updated.game.hand,snapshot.game.hand)
+  assert.notEqual(updated.game.plays,snapshot.game.plays)
+  assert.equal(updated.game.plays[0].revealedCards.length,0)
+  assert.equal(updated.players[0].balance,400)
+  assert.equal(snapshot.game.plays[0].revealedCards[0].rank,'K')
+})
+
+test('spelling drafts coalesce typing and final answers are sent immediately', async () => {
+  const f = fixture(); await f.identify()
+  f.store.setState({room:{...room,game:{gameId:'deal',phase:'ACTIVE',spelling:{id:'round',stage:'ACTIVE'}}}})
+  for(const answer of ['q','qu','qui','']) f.store.getState().command('SPELL_DRAFT',[],undefined,'round',answer)
+  assert.equal(f.sockets[0].sent.filter(message=>message.type==='GAME_COMMAND').length,0)
+  f.runTimer(100)
+  assert.equal(f.sockets[0].sent.at(-1).payload.answer,'')
+  f.store.getState().command('SPELL_DRAFT',[],undefined,'round','quiet')
+  f.store.getState().command('SPELL_ANSWER',[],undefined,'round','quiet')
+  assert.equal(f.sockets[0].sent.at(-1).payload.action,'SPELL_ANSWER')
+  assert.equal(f.timers.length,0)
+})
+
+test('spelling edits near the deadline bypass draft coalescing', async () => {
+  const f = fixture(); await f.identify()
+  f.store.setState({room:{...room,game:{gameId:'deal',phase:'ACTIVE',spelling:{id:'round',stage:'ACTIVE',deadline:1000,serverNow:500}}}})
+  f.store.getState().command('SPELL_DRAFT',[],undefined,'round','last edit')
+  assert.equal(f.sockets[0].sent.at(-1).payload.answer,'last edit')
+  assert.equal(f.timers.length,0)
+})
+
 test('rejected socket auth restores the same device credential before retrying', async () => {
   const f = fixture(); await f.identify(false)
   const token = JSON.parse(f.history.find(r=>r.path==='/api/players').options.body).deviceToken
@@ -234,7 +279,7 @@ test('rejected socket auth restores the same device credential before retrying',
   assert.equal(JSON.parse(restoring.options.body).deviceToken,token)
   assert.equal(JSON.parse(restoring.options.body).legacyPlayerId,player.id)
   await f.respond('/api/players',player)
-  f.runTimer(1600)
+  f.runTimer(250)
   f.sockets[1].open(); f.sockets[1].emit('CONNECTED',{playerId:player.id})
   assert.equal(f.store.getState().player.id,player.id)
   assert.equal(f.store.getState().connected,true)
@@ -244,7 +289,7 @@ test('malformed live messages cannot leave a socket silently stuck', async () =>
   const f = fixture(); await f.identify()
   f.sockets[0].onmessage({data:'not JSON'})
   assert.equal(f.store.getState().connected,false)
-  f.runTimer(1600)
+  f.runTimer(250)
   assert.equal(f.sockets.length,2)
 })
 
@@ -339,8 +384,8 @@ test('server rejection removes the selected room and displays the reason', async
 
 test('lobby has one entrance transition, not a second per-card entrance', () => {
   const app = readFileSync(new URL('../src/App.tsx',import.meta.url),'utf8')
-  const lobbyCard = app.slice(app.indexOf('function RoomCard('),app.indexOf('function Room()'))
-  assert.match(lobbyCard, /<article className="room-card">/)
+  const lobbyCard = app.slice(app.indexOf('function RoomCard('),app.indexOf('const Room = memo('))
+  assert.match(lobbyCard, /<article className=\{`room-card /)
   assert.doesNotMatch(lobbyCard, /initial=|animate=/)
   assert.doesNotMatch(lobbyCard, /status status-|timeAgo|Created /)
   assert.doesNotMatch(app.slice(0,app.indexOf('function DeviceCheck')), /AnimatePresence mode="wait"/)
@@ -433,7 +478,9 @@ test('waiting room never renders game wallets or payout overlay', () => {
   const waiting = app.slice(app.indexOf('function WaitingRoom()'),app.indexOf('function PlayerRow('))
   assert.doesNotMatch(waiting,/Wallets|RoundFeedback|event-log/)
   const table = app.slice(app.indexOf('function GameTable('),app.indexOf('function IdentityName('))
-  assert.match(table,/<Wallets /)
+  assert.match(table,/<TablePanels /)
+  const panels = readFileSync(new URL('../src/TablePanels.tsx',import.meta.url),'utf8')
+  assert.match(panels,/<Wallets /)
   assert.match(table,/<RoundFeedback \/>/)
 })
 
@@ -489,7 +536,7 @@ test('reconnect retries only unconfirmed purchases, keeping every original recei
   originalSocket.emit('ERROR',{message:'Not enough coins',requestId:originals[1].payload.requestId})
   originalSocket.emit('THROW_CONFIRMED',{requestId:'unrelated'})
   originalSocket.close()
-  f.runTimer(1600)
+  f.runTimer(250)
   const reconnected = f.sockets.at(-1)
   reconnected.open(); reconnected.emit('CONNECTED',{playerId:player.id})
   const retries = reconnected.sent.filter(message=>message.payload.action==='THROW')
@@ -507,7 +554,7 @@ test('failed sends and old deals are never retried as new purchases', async () =
   socket.send = send
   assert.equal(f.store.getState().throwItem('TOMATO','target-player'),true)
   socket.emit('ROOM_STATE',{...room,game:{phase:'ACTIVE',gameId:'next-deal'}})
-  socket.close(); f.runTimer(1600)
+  socket.close(); f.runTimer(250)
   const reconnected = f.sockets.at(-1)
   reconnected.open(); reconnected.emit('CONNECTED',{playerId:player.id})
   assert.equal(reconnected.sent.filter(message=>message.payload.action==='THROW').length,0)

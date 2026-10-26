@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { SkinId } from './types'
 import { createCardArtRenderer, paintStillCardArt } from './cardArt'
 
 /** Original procedural card art; flying cards reuse a cached raster of this artwork. */
-export function CardBack({ skin, compact = false, still = false }: {
+export const CardBack = memo(function CardBack({ skin, compact = false, still = false }: {
   skin: SkinId; compact?: boolean; still?: boolean
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -68,4 +68,4 @@ export function CardBack({ skin, compact = false, still = false }: {
     <div className="skin-engraving" aria-hidden="true"><span>✦</span><b>♠</b><span>✦</span></div>
     {!compact && <span className="skin-signature" aria-hidden="true">BLUFF / {skin === 'CLASSIC' ? 'HOUSE' : skin}</span>}
   </div>
-}
+})

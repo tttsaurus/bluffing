@@ -1,5 +1,6 @@
 import { AnimatePresence, motion, MotionConfig } from 'motion/react'
-import { FormEvent, useEffect, useRef, useState } from 'react'
+import { FormEvent, memo, useEffect, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useGameStore } from './store'
 import type { GameType, Member, Player, RoomSummary } from './types'
 import { CardBack } from './CardBack'
@@ -10,17 +11,21 @@ import { DeckShop } from './DeckShop'
 import { Modal } from './Modal'
 import { Leaderboards } from './Leaderboards'
 import { recentActions, skinNames, tableSkins } from './presentation'
-import { PlayHistory, RoundFeedback, Wallets } from './GameFeedback'
+import { PlayHistory, RoundFeedback } from './GameFeedback'
 import { TableActivity, TableSeats } from './TableActivity'
 import { TableActionEffects } from './TableActionEffects'
-import { ThrowBar } from './ThrowBar'
+import { TablePanels } from './TablePanels'
 import { ThrowEffects } from './ThrowEffects'
 import { gameModes, ranks } from './gameModes'
 import { FourFunRules, PlusRules } from './PlusRules'
+import { WaitingRoomNotice, clearTableResetNotice } from './WaitingRoomNotice'
 
 export default function App() {
-  const { player, room, error, clearError, bootstrapping } = useGameStore()
-  useEffect(() => { window.scrollTo(0, 0) }, [room?.id, room?.game?.phase])
+  const { player, roomId, gamePhase, error, clearError, bootstrapping } = useGameStore(useShallow(state => ({
+    player: state.player, roomId: state.room?.id, gamePhase: state.room?.game?.phase,
+    error: state.error, clearError: state.clearError, bootstrapping: state.bootstrapping,
+  })))
+  useEffect(() => { window.scrollTo(0, 0) }, [roomId, gamePhase])
   useEffect(() => {
     const reconnect = () => useGameStore.getState().reconnect()
     const onVisible = () => { if (document.visibilityState === 'visible') reconnect() }
@@ -32,10 +37,10 @@ export default function App() {
     }
   }, [])
   return (
-    <MotionConfig reducedMotion="user"><main className={room ? 'app game-shell' : 'app'}>
+    <MotionConfig reducedMotion="user"><main className={roomId ? 'app game-shell' : 'app'}>
       <Ambient />
       <div className="screen">
-        {bootstrapping ? <DeviceCheck key="device-check" /> : !player ? <Identity key="identity" /> : room ? <Room key={room.id} /> : <Lobby key="lobby" />}
+        {bootstrapping ? <DeviceCheck key="device-check" /> : !player ? <Identity key="identity" /> : roomId ? <Room key={roomId} /> : <Lobby key="lobby" />}
       </div>
       <AnimatePresence>
         {error && (
@@ -153,11 +158,16 @@ function RoomCard({ room, index, onJoin, onDelete, canDelete, onInspect, disable
   )
 }
 
-function Room() {
+const Room = memo(function Room() {
   const room = useGameStore(s => s.room)
+  const playerId = useGameStore(s => s.player?.id)
   const game = room?.game
   const [visibleGameId, setVisibleGameId] = useState(game?.phase === 'ACTIVE' ? game.gameId : null)
   const [effectsPending, setEffectsPending] = useState(false)
+  useEffect(() => {
+    // A later deal can produce the same reset message, but it is a new event.
+    if (room && playerId && game?.phase === 'ACTIVE') clearTableResetNotice(room.id, playerId)
+  }, [room?.id, playerId, game?.gameId, game?.phase])
   useEffect(() => {
     if (game?.phase === 'ACTIVE') { setVisibleGameId(game.gameId); return }
     if (game?.phase === 'FINISHED' && game.gameId === visibleGameId) {
@@ -170,7 +180,7 @@ function Room() {
   }, [game?.gameId, game?.phase, visibleGameId, effectsPending])
   if (!room) return null
   return game && (game.phase === 'ACTIVE' || game.gameId === visibleGameId) ? <GameTable key={game.gameId} onEffectsPending={setEffectsPending} /> : <WaitingRoom />
-}
+})
 
 function TopBar({ showRoomType = false }: { showRoomType?: boolean }) {
   const { room, player, leaveRoom, connected, reconnect, stopGame, loading, error } = useGameStore()
@@ -215,12 +225,10 @@ function WaitingRoom() {
   const capacity = mode.cardsPerDeck * (random ? 1 : decks)
   const maxHand = Math.floor(capacity / Math.max(1, activeCount))
   const validHand = !custom || (Number.isInteger(cards) && cards >= 1 && cards <= maxHand)
-  const winner = room.players.find(member => member.id === room.game?.winnerId)
   return (
     <motion.div className="waiting page" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
       <TopBar showRoomType />
-      {room.notice && <TransientMatchResult key={`notice-${room.id}-${room.notice}`} title="■ Table reset" description={room.notice} />}
-      {room.game?.phase === 'FINISHED' && <TransientMatchResult key={`finished-${room.game.gameId}`} title={winner ? `♛ ${winner.displayName} #${winner.identityTag} won the deal` : 'Deal ended · not enough players'} description={winner ? 'Ready for another hand?' : 'No winner bonus. Room wallets restored.'} />}
+      <WaitingRoomNotice room={room} playerId={player.id} />
       <section className={`waiting-layout ${isHost ? '' : 'no-game-setup'}`}>
         <section className="players-panel panel" aria-label="Players">
           <div className="player-list">{room.players.map(member => <PlayerRow key={member.id} member={member} self={member.id === player.id}
@@ -252,19 +260,8 @@ function PlayerRow({ member, self, canKick, onKick }: { member: Member; self: bo
     <b className="coins">◆ {member.balance}</b>{canKick && <button className="kick-button" onClick={onKick}>KICK</button>}</div>
 }
 
-function TransientMatchResult({ title, description }: { title: string; description: string }) {
-  const [visible, setVisible] = useState(true)
-  useEffect(() => {
-    const timer = window.setTimeout(() => setVisible(false), 6500)
-    return () => window.clearTimeout(timer)
-  }, [])
-  return <AnimatePresence>{visible && <motion.div className="match-result" role="status" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: .22 }}>
-    <b>{title}</b><span>{description}</span>
-  </motion.div>}</AnimatePresence>
-}
-
 function GameTable({ onEffectsPending }: { onEffectsPending: (pending: boolean) => void }) {
-  const { room, player, command, connected } = useGameStore()
+  const { room, player, command, connected } = useGameStore(useShallow(state => ({ room: state.room, player: state.player, command: state.command, connected: state.connected })))
   const [selected, setSelected] = useState<string[]>([])
   const [rank, setRank] = useState('A')
   const game = room?.game
@@ -281,7 +278,6 @@ function GameTable({ onEffectsPending }: { onEffectsPending: (pending: boolean) 
   const spellingRunning = game.spelling?.stage === 'ACTIVE'
   const myTurn = connected && !spellingRunning && game.currentPlayerId === player.id && game.phase === 'ACTIVE'
   const participating = game.hands.some(hand => hand.playerId === player.id)
-  const mode = gameModes[room.gameType]
   const skins = tableSkins(room)
   const risk = game.generation * selected.length * 10
   const rewardGeneration = myTurn ? game.generation : game.lastClaim?.generation ?? game.generation
@@ -335,23 +331,10 @@ function GameTable({ onEffectsPending }: { onEffectsPending: (pending: boolean) 
             </div>
             <CardHand cards={game.hand} selected={selected} disabled={!myTurn} onSelectionChange={setSelected} scrollRef={handScroll} />
           </section>}
-          {mode.ruleHints.includes('plus') && <div className="battle-rules"><PlusRules cards={game.hand.filter(card => selected.includes(card.id))} rank={game.targetRank ?? rank} spellWild={mode.ruleHints.includes('spelling')} /></div>}
-          {mode.ruleHints.includes('spelling') && <div className="battle-rules"><FourFunRules /></div>}
-          <aside className="battle-reward-board" aria-label="Reward and wallet">
-            <div className="reward-board-heading"><strong>{gameModes[room.gameType].name}</strong></div>
-            <Wallets room={room} playerId={player.id} />
-            <motion.div className="risk-box" aria-label={`Potential reward: generation ${rewardGeneration} times ${rewardCards} cards, ${rewardValue} coins`} animate={{ scale: selected.length ? [1, 1.025, 1] : 1 }} transition={{ duration: .24 }}>
-              <div className="risk-formula" aria-label={`${rewardGeneration} times ${rewardCards}`}>
-                <div className="risk-factor generation" aria-label="Generation"><strong>{rewardGeneration}</strong></div>
-                <b className="risk-operator">×</b>
-                <div className="risk-factor cards-factor" aria-label="Cards"><strong>{rewardCards}</strong></div>
-              </div>
-              <div className="risk-payout"><span>× 10</span><strong>{rewardValue}</strong><b>◆</b></div>
-            </motion.div>
-          </aside>
         </section>
       </div>
-      <ThrowBar room={room} playerId={player.id} />
+      <TablePanels room={room} playerId={player.id} generation={rewardGeneration} cards={rewardCards} value={rewardValue}
+        selection={game.hand.filter(card => selected.includes(card.id))} rank={game.targetRank ?? rank} />
     </motion.div>
   )
 }
