@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <title>Bluff Table — classic poker card back</title>
+  <defs>
+    <pattern id="diamonds" width="6" height="6" patternUnits="userSpaceOnUse">
+      <path d="m3 0 3 3-3 3-3-3Z" stroke="#ffe8b8" stroke-opacity=".35" stroke-width=".6"/>
+    </pattern>
+  </defs>
+  <rect x="10" y="2" width="44" height="60" rx="5" fill="#fff4dc" stroke="#6d252a"/>
+  <rect x="13" y="5" width="38" height="54" rx="3" fill="#9b2436"/>
+  <rect x="15" y="7" width="34" height="50" rx="2" fill="url(#diamonds)" stroke="#ffe8b8" stroke-width=".8"/>
+  <path d="m20 11 3 3-3 3-3-3Zm24 36 3 3-3 3-3-3Z" fill="#ffe8b8"/>
+  <ellipse cx="32" cy="32" rx="13" ry="17" fill="#9b2436" stroke="#ffe8b8" stroke-width="1.4"/>
+  <path d="M32 20c-3 5-10 8-10 14a6 6 0 0 0 10 4 6 6 0 0 0 10-4c0-6-7-9-10-14Z" fill="#fff4dc"/>
+  <path d="M30 36h4c0 4 1 6 4 8H26c3-2 4-4 4-8Z" fill="#fff4dc"/>
+</svg>
